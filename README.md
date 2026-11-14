@@ -1,5 +1,11 @@
 # Checkpoint — supportive accountability
 
+> **Direction change (Nov 2026):** this repo is becoming **Vault**, a bet-on-yourself
+> accountability app where missed stakes are locked, not lost, and can be earned back
+> with harder challenges. The full build prompt and competitor research are in
+> [docs/BET_ON_YOURSELF_PROMPT.md](docs/BET_ON_YOURSELF_PROMPT.md). The Checkpoint code
+> below is the foundation it will be built on.
+
 > Learn-it-all, not know-it-all.
 
 Checkpoint is a small, open-source accountability web app. You set goals,
