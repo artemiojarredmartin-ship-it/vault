@@ -1,0 +1,11 @@
+{
+  "name": "vault-accountability",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Bet on yourself. Missed stakes are locked, not lost, and earned back with harder challenges.",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test",
+    "serve": "python3 -m http.server 8765"
+  }
+}

@@ -1,741 +1,645 @@
-/* Checkpoint — app logic.
- * One state object, one render() per change, event delegation on #app.
+/* Vault — app logic.
+ * One state object (see js/core.js for the rules), one render() per change,
+ * event delegation on document. Time-based transitions run through Core.tick.
  */
 (function () {
   'use strict';
 
-  // ---------- State ----------
+  const { HOUR, DAY, MIN, RULES, TIERS } = Core;
+
   let state = Storage.load();
-  let ui = {
-    tab: 'dashboard',
-    editingGoalId: null,     // goal being edited in the Goals tab
-    checkinGoalId: null,     // goal selected in the Check-ins tab
-    showArchived: false,
-    composer: { partnerId: '', goalId: '', text: '' }
+  const ui = {
+    tab: 'today',
+    sheet: null,            // { kind: 'prove-bet'|'prove-redemption'|'redeem', id, shot?, cameraError? }
+    vaultHistory: false,
+    betFilter: 'active',
+    deadlinePick: '24h'
   };
 
   const app = document.getElementById('app');
-  const TABS = ['dashboard', 'goals', 'checkins', 'partners', 'learn', 'settings'];
+  const sheetRoot = document.getElementById('sheet-root');
+  const TABS = ['today', 'bets', 'vault', 'ledger', 'learn', 'settings'];
+
+  // ---------- time (supports the testing "time machine") ----------
+  function now() { return Date.now() + (state.settings.clockOffset || 0); }
 
   function commit() { Storage.save(state); render(); }
 
-  // ---------- Date helpers ----------
-  const pad = n => String(n).padStart(2, '0');
-  function ymd(d = new Date()) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
-  function parseYmd(s) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); }
-  function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-  function startOfWeek(d) { // Monday
-    const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0, 0, 0, 0); return x;
-  }
-  /** Period key for a goal: the day for daily goals, the Monday of the week for weekly goals. */
-  function periodKey(goal, date = new Date()) {
-    return goal.cadence === 'weekly' ? ymd(startOfWeek(date)) : ymd(date);
-  }
-  function periodStep(goal, date, n) { return addDays(date, goal.cadence === 'weekly' ? 7 * n : n); }
-  function fmtDate(s) {
-    const d = parseYmd(s);
-    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  function tickAndMaybeRender() {
+    const events = Core.tick(state, now());
+    if (events.length) {
+      Storage.save(state);
+      for (const ev of events) {
+        if (ev.type === 'locked') toast(`"${ev.bet.title}" missed. ${ev.bet.stake} credits are in the Vault, not gone.`);
+        if (ev.type === 'decayed') toast(`${ev.entry.amount} credits went to ${ev.entry.destination}.`);
+      }
+      render();
+    }
+    return events;
   }
 
-  // ---------- Derived data ----------
-  function goalById(id) { return state.goals.find(g => g.id === id); }
-  function activeGoals() { return state.goals.filter(g => !g.archived); }
-  function checkinsFor(goalId) { return state.checkins.filter(c => c.goalId === goalId); }
-  function checkinAt(goal, date) {
-    const key = periodKey(goal, date);
-    return checkinsFor(goal.id).find(c => periodKey(goal, parseYmd(c.date)) === key);
-  }
-  /** Consecutive periods (ending today or last period) with done/partial. */
-  function streak(goal) {
-    let n = 0;
-    let cursor = new Date();
-    // Allow the current period to be unfilled without breaking the streak.
-    if (!checkinAt(goal, cursor)) cursor = periodStep(goal, cursor, -1);
-    while (true) {
-      const c = checkinAt(goal, cursor);
-      if (!c || c.status === 'missed') break;
-      n++;
-      cursor = periodStep(goal, cursor, -1);
-      if (n > 3650) break;
-    }
-    return n;
-  }
-  function lastNPeriods(goal, n) {
-    const out = [];
-    for (let i = n - 1; i >= 0; i--) {
-      const d = periodStep(goal, new Date(), -i);
-      out.push({ date: d, key: periodKey(goal, d), checkin: checkinAt(goal, d), isCurrent: i === 0 });
-    }
-    return out;
-  }
-  function weekStats() {
-    const start = startOfWeek(new Date());
-    const keys = new Set();
-    for (let i = 0; i < 7; i++) keys.add(ymd(addDays(start, i)));
-    const thisWeek = state.checkins.filter(c => keys.has(c.date));
-    const done = thisWeek.filter(c => c.status === 'done').length;
-    const partial = thisWeek.filter(c => c.status === 'partial').length;
-    const total = thisWeek.length;
-    const lessons = thisWeek.filter(c => c.learned && c.learned.trim()).length;
-    const rate = total ? Math.round(((done + partial * 0.5) / total) * 100) : null;
-    return { done, partial, total, lessons, rate };
-  }
-  function dueToday() {
-    return activeGoals().filter(g => !checkinAt(g, new Date()));
-  }
-  function todaysPrompt() {
-    const day = Math.floor(Date.now() / 86400000);
-    return Content.PROMPTS[day % Content.PROMPTS.length];
-  }
-
-  // ---------- Escaping ----------
+  // ---------- helpers ----------
   function esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
+  function fmtCredits(n) { return (Math.round(n * 100) / 100).toLocaleString(); }
+  function fmtWhen(ms) {
+    const d = new Date(ms);
+    const sameYear = d.getFullYear() === new Date(now()).getFullYear();
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', year: sameYear ? undefined : 'numeric' });
+  }
+  function fmtDur(ms) {
+    const neg = ms < 0; ms = Math.abs(ms);
+    const d = Math.floor(ms / DAY), h = Math.floor((ms % DAY) / HOUR), m = Math.floor((ms % HOUR) / MIN), s = Math.floor((ms % MIN) / 1000);
+    let out;
+    if (d > 0) out = `${d}d ${h}h`;
+    else if (h > 0) out = `${h}h ${m}m`;
+    else if (m > 0) out = `${m}m ${s}s`;
+    else out = `${s}s`;
+    return neg ? out + ' ago' : out;
+  }
+  function countdown(deadline, label = 'left') {
+    const left = deadline - now();
+    const cls = left < HOUR ? 'urgent' : left < 6 * HOUR ? 'soon' : '';
+    return `<span class="countdown ${cls}" data-countdown="${deadline}" data-label="${esc(label)}">${left < 0 ? 'overdue' : fmtDur(left) + ' ' + label}</span>`;
+  }
+  function measureText(m) {
+    if (!m || m.kind === 'binary') return 'once';
+    return `${m.amount} ${m.unit}`;
+  }
+  function tierPill(t) { return `<span class="pill ${t >= 1 ? 'accent' : ''}">${esc(TIERS[t].name)} proof</span>`; }
+  function chances(n, total = RULES.CHANCES) {
+    let s = '<span class="chances" title="' + n + ' of ' + total + ' chances left">';
+    for (let i = 0; i < total; i++) s += `<i class="${i < n ? 'on' : ''}"></i>`;
+    return s + '</span>';
+  }
+  function toLocalInput(ms) {
+    const d = new Date(ms); const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function endOfToday() { const d = new Date(now()); d.setHours(23, 59, 0, 0); return d.getTime(); }
+  function quickDeadline(key) {
+    const t = now();
+    return ({ tonight: endOfToday(), '1h': t + HOUR, '24h': t + 24 * HOUR, '3d': t + 3 * DAY, '7d': t + 7 * DAY })[key];
+  }
+  function todaysPrompt() { return Content.PROMPTS[Math.floor(now() / DAY) % Content.PROMPTS.length]; }
 
-  // ---------- Toast ----------
   let toastTimer;
   function toast(msg) {
     const el = document.getElementById('toast');
     el.textContent = msg; el.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.hidden = true; }, 2400);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
   }
 
-  // ---------- Routing ----------
+  // ---------- routing ----------
   function setTab(tab) {
-    ui.tab = TABS.includes(tab) ? tab : 'dashboard';
+    ui.tab = TABS.includes(tab) ? tab : 'today';
     if (location.hash !== '#' + ui.tab) history.replaceState(null, '', '#' + ui.tab);
     document.querySelectorAll('.tabs a').forEach(a => a.classList.toggle('active', a.dataset.nav === ui.tab));
-    render();
-    window.scrollTo({ top: 0 });
+    render(); window.scrollTo({ top: 0 });
   }
   window.addEventListener('hashchange', () => setTab(location.hash.slice(1)));
 
-  // ---------- Views ----------
+  // ---------- render ----------
   function render() {
-    const views = { dashboard, goals, checkins, partners, learn, settings };
+    Core.tick(state, now());
+    const views = { today, bets, vault, ledger, learn, settings };
     app.innerHTML = views[ui.tab]();
+    sheetRoot.innerHTML = ui.sheet ? sheet() : '';
+    document.body.style.overflow = ui.sheet ? 'hidden' : '';
     afterRender();
   }
 
-  function greeting() {
-    const h = new Date().getHours();
-    const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-    return state.settings.name ? `${part}, ${esc(state.settings.name)}` : part;
-  }
-
-  function dashboard() {
-    const due = dueToday();
-    const ws = weekStats();
-    const goalsList = activeGoals();
-    const best = goalsList.map(g => ({ g, s: streak(g) })).sort((a, b) => b.s - a.s)[0];
-
-    if (!goalsList.length) {
-      return `
-        <div class="page-head"><div><h1>${greeting()}</h1><p class="muted">Let's set up your first goal.</p></div></div>
-        <div class="card">
-          <h2>Welcome to Checkpoint</h2>
-          <p>Checkpoint is accountability without the shame. You set goals, check in, and your partner gives feedback in a <strong>supportive</strong> climate — describing rather than judging, asking rather than ordering.</p>
-          <p>Start with one goal. Keep it small enough to do on a bad day.</p>
-          <div class="row">
-            <button class="primary" data-action="nav" data-tab="goals">Create a goal</button>
-            <button data-action="nav" data-tab="learn">Read the idea first</button>
-          </div>
-        </div>
-        <div class="card soft mt">
-          <h3>Today's prompt</h3>
-          <p class="mb0">${esc(todaysPrompt())}</p>
-        </div>`;
-    }
-
-    return `
-      <div class="page-head">
-        <div><h1>${greeting()}</h1><p class="muted">${esc(new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}</p></div>
-        <button class="primary" data-action="nav" data-tab="checkins">Check in</button>
-      </div>
-
-      <div class="grid">
-        <div class="card stat">
-          <div class="num">${due.length}</div>
-          <div class="label">${due.length === 1 ? 'goal' : 'goals'} waiting for a check-in</div>
-        </div>
-        <div class="card stat">
-          <div class="num">${ws.rate == null ? '—' : ws.rate + '%'}</div>
-          <div class="label">completion this week (${ws.total} check-in${ws.total === 1 ? '' : 's'})</div>
-        </div>
-        <div class="card stat">
-          <div class="num">${ws.lessons}</div>
-          <div class="label">lesson${ws.lessons === 1 ? '' : 's'} written down this week</div>
-        </div>
-        <div class="card stat">
-          <div class="num">${best ? best.s : 0}</div>
-          <div class="label">${best && best.s ? `longest streak · ${esc(best.g.title)}` : 'longest streak'}</div>
-        </div>
-      </div>
-
-      <div class="stack mt">
-        ${due.length ? `
-        <div class="card">
-          <h2>Due now</h2>
-          <div class="stack">
-            ${due.map(g => `
-              <div class="row spread">
-                <div>
-                  <div class="goal-item"><span class="title">${esc(g.title)}</span></div>
-                  <div class="small muted">${g.cadence === 'weekly' ? 'this week' : 'today'} · streak ${streak(g)}</div>
-                </div>
-                <div class="row">
-                  <button class="status-btn done sm" data-action="quick-checkin" data-goal="${g.id}" data-status="done">Done</button>
-                  <button class="status-btn partial sm" data-action="quick-checkin" data-goal="${g.id}" data-status="partial">Partial</button>
-                  <button class="status-btn missed sm" data-action="quick-checkin" data-goal="${g.id}" data-status="missed">Missed</button>
-                </div>
-              </div>`).join('')}
-          </div>
-          <p class="small muted mt mb0">Quick check-in skips the note. Use the Check-ins tab to add what you learned.</p>
-        </div>` : `
-        <div class="card soft">
-          <h2>All caught up</h2>
-          <p class="mb0">Every active goal has a check-in for this period. Nice.</p>
-        </div>`}
-
-        <div class="card">
-          <h2>Your goals</h2>
-          <div class="stack">
-            ${goalsList.map(g => `
-              <div>
-                <div class="row spread">
-                  <span class="title"><strong>${esc(g.title)}</strong> <span class="pill">${g.cadence}</span></span>
-                  <span class="small muted streak">streak ${streak(g)}</span>
-                </div>
-                ${strip(g)}
-              </div>`).join('')}
-          </div>
-        </div>
-
-        <div class="card soft">
-          <h3>Today's prompt</h3>
-          <p class="mb0">${esc(todaysPrompt())}</p>
-        </div>
-      </div>`;
-  }
-
-  function strip(goal, n = 14) {
-    return `<div class="strip" title="Last ${n} ${goal.cadence === 'weekly' ? 'weeks' : 'days'}">
-      ${lastNPeriods(goal, n).map(p =>
-        `<span class="${p.checkin ? p.checkin.status : ''} ${p.isCurrent ? 'today' : ''}" title="${p.key}${p.checkin ? ' · ' + p.checkin.status : ''}"></span>`
-      ).join('')}
+  function balancesBlock() {
+    const b = Core.balances(state);
+    return `<div class="balances">
+      <div class="card"><div class="num">${fmtCredits(b.wallet)}</div><div class="label">wallet</div></div>
+      <div class="card stake"><div class="num">${fmtCredits(b.atStake)}</div><div class="label">at stake</div></div>
+      <div class="card vault"><div class="num">${fmtCredits(b.inVault)}</div><div class="label">in the Vault</div></div>
     </div>`;
   }
 
-  function goals() {
-    const editing = ui.editingGoalId ? goalById(ui.editingGoalId) : null;
-    const list = state.goals.filter(g => ui.showArchived || !g.archived);
-    return `
-      <div class="page-head">
-        <div><h1>Goals</h1><p class="muted">Small enough to do on a bad day. Clear enough to know if you did it.</p></div>
+  function betCard(b, opts = {}) {
+    const t = now();
+    const canCancel = b.status === 'active' && t - b.createdAt <= RULES.COOLING_OFF_MS;
+    const proof = b.proofIds.length ? state.proofs.find(p => p.id === b.proofIds[b.proofIds.length - 1]) : null;
+    const entry = Core.entryForBet(state, b.id);
+    return `<div class="card bet-card" data-bet="${b.id}">
+      <div class="top">
+        <div><div class="title">${esc(b.title)}</div>${b.why ? `<div class="small muted">${esc(b.why)}</div>` : ''}</div>
+        <div class="amt">${fmtCredits(b.stake)}<span class="small muted"> cr</span></div>
+      </div>
+      <div class="meta">
+        <span class="pill ${b.status === 'won' ? 'done' : b.status === 'locked' ? 'partial' : b.status === 'cancelled' ? '' : 'accent'}">${b.status}</span>
+        ${tierPill(b.proofTier)}
+        <span>${esc(measureText(b.measure))}</span>
+        ${b.status === 'active' ? `<span>· due ${esc(fmtWhen(b.deadline))} · ${countdown(b.deadline)}</span>` : `<span>· ${esc(fmtWhen(b.resolvedAt || b.deadline))}</span>`}
+      </div>
+      ${b.status === 'active' && b.proofTier >= 1 ? `<div class="small muted">Proof code <span class="code">${b.proofCode}</span> must be visible in your photo.</div>` : ''}
+      ${proof && proof.mediaKey ? `<img class="thumb" data-media="${proof.mediaKey}" alt="proof photo">` : ''}
+      ${entry && b.status === 'locked' ? `<div class="small muted">Vault: ${fmtCredits(entry.amount)} locked · ${chances(entry.chancesLeft)} · ${entry.status === 'locked' ? 'decays ' + countdown(entry.decaysAt, 'from now') : entry.status}</div>` : ''}
+      ${b.status === 'active' ? `<div class="row">
+        <button class="primary" data-action="open-prove-bet" data-id="${b.id}">Prove it</button>
+        ${canCancel ? `<button class="ghost" data-action="cancel-bet" data-id="${b.id}">Cancel (${fmtDur(RULES.COOLING_OFF_MS - (t - b.createdAt))} left)</button>` : ''}
+      </div>` : ''}
+      ${entry && entry.status === 'locked' && opts.redeemButton !== false ? `<div class="row"><button data-action="nav" data-tab="vault">Open in Vault</button></div>` : ''}
+    </div>`;
+  }
+
+  function entryCard(e, full = true) {
+    const bet = Core.betById(state, e.betId);
+    const red = Core.activeRedemptionFor(state, e.id);
+    const past = state.redemptions.filter(r => r.vaultEntryId === e.id && r.status !== 'active');
+    const canRedeem = e.status === 'locked' && e.chancesLeft > 0 && !red;
+    return `<div class="card entry-card ${e.status}" data-entry="${e.id}">
+      <div class="top row spread">
+        <div><div class="title"><strong>${esc(bet.title)}</strong></div>
+          <div class="small muted">Locked ${esc(fmtWhen(e.lockedAt))} · originally ${fmtCredits(e.originalAmount)} cr</div></div>
+        <div class="amt">${fmtCredits(e.amount)}<span class="small muted"> cr</span></div>
+      </div>
+      <div class="meta mt">
+        <span class="pill ${e.status === 'locked' ? 'partial' : e.status === 'redeemed' ? 'done' : 'missed'}">${e.status}</span>
+        ${e.status === 'locked' ? `<span>${chances(e.chancesLeft)} ${e.chancesLeft} chance${e.chancesLeft === 1 ? '' : 's'}</span><span>· decays in ${countdown(e.decaysAt, '')}</span>` : ''}
+        <span>· to ${esc(e.destination)}</span>
+      </div>
+      ${red ? `<div class="card soft mt">
+        <div class="row spread"><strong>Redemption: ${esc(red.title)}</strong><span class="amt small">${fmtCredits(e.amount)} cr</span></div>
+        <div class="meta"><span>${esc(measureText(red.measure))}</span>${tierPill(red.proofTier)}<span>· harder by ${red.harderBy.join(', ')}</span><span>· ${countdown(red.deadline)}</span></div>
+        ${red.proofTier >= 1 ? `<div class="small muted">Proof code <span class="code">${red.proofCode}</span></div>` : ''}
+        <div class="row mt"><button class="primary" data-action="open-prove-redemption" data-id="${red.id}">Prove it</button></div>
+      </div>` : ''}
+      ${canRedeem ? `<div class="row mt"><button class="primary" data-action="open-redeem" data-id="${e.id}">Earn it back</button></div>` : ''}
+      ${e.status === 'locked' && e.chancesLeft === 0 && !red ? `<p class="small muted mt">No chances left. ${fmtCredits(e.amount)} credits go to ${esc(e.destination)} when the timer ends.</p>` : ''}
+      ${full ? `
+        ${past.length ? `<details class="mt"><summary>${past.length} past attempt${past.length === 1 ? '' : 's'}</summary>
+          ${past.map(r => `<div class="small mt"><span class="pill ${r.status === 'succeeded' ? 'done' : r.status === 'partial' ? 'partial' : 'missed'}">${r.status}</span> ${esc(r.title)} · ${esc(measureText(r.measure))}${r.unlocked ? ` · unlocked ${fmtCredits(r.unlocked)}` : ''}</div>`).join('')}
+        </details>` : ''}
+        <label class="mt">What got in the way? <span class="hint">Describe, don't judge. This is for you.</span>
+          <textarea data-action="wgitw" data-id="${e.id}" rows="2" placeholder="e.g. Practice ran late and I didn't have a shorter version planned.">${esc(e.whatGotInTheWay)}</textarea>
+        </label>` : ''}
+    </div>`;
+  }
+
+  // ---------- views ----------
+  function today() {
+    const t = now();
+    const active = state.bets.filter(b => b.status === 'active').sort((a, b) => a.deadline - b.deadline);
+    const locked = state.vault.filter(e => e.status === 'locked');
+    const st = Core.stats(state);
+    const name = state.settings.name;
+    const h = new Date(t).getHours();
+    const greet = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (name ? ', ' + esc(name) : '');
+
+    if (!state.bets.length) {
+      return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">You have ${fmtCredits(state.wallet.credits)} credits. Bet on yourself.</p></div></div>
+        <div class="card">
+          <h2>How Vault works</h2>
+          <p><strong>1. Place a bet.</strong> A goal, a stake, an honest deadline.</p>
+          <p><strong>2. Prove it.</strong> Before the deadline. Keep your credits.</p>
+          <p><strong>3. Miss it?</strong> The stake is locked in your Vault, not lost. You get three chances to earn it back by doing something harder.</p>
+          <p class="muted small">Phase 0 uses play credits. We never keep your money, now or later.</p>
+          <div class="row"><button class="primary big-cta" data-action="nav" data-tab="bets">Place your first bet</button></div>
+          <div class="row mt"><button class="ghost" data-action="sample">Or load sample data to look around</button></div>
+        </div>
+        <div class="card soft mt"><h3>Today's prompt</h3><p class="mb0">${esc(todaysPrompt())}</p></div>`;
+    }
+
+    return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">${esc(new Date(t).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}</p></div>
+        <button class="primary" data-action="nav" data-tab="bets">New bet</button></div>
+      ${balancesBlock()}
+      <div class="row small muted mt" style="gap:1rem">
+        <span>Win rate <strong>${st.winRate == null ? '—' : st.winRate + '%'}</strong></span>
+        <span>Streak <strong>${st.streak}</strong></span>
+        <span>Saved by proving it <strong>${fmtCredits(st.saved)}</strong></span>
+        ${st.everLocked ? `<span>Recovered <strong>${st.recoveryRate}%</strong></span>` : ''}
       </div>
 
-      <div class="card">
-        <h2>${editing ? 'Edit goal' : 'New goal'}</h2>
-        <form data-form="goal">
-          <input type="hidden" name="id" value="${editing ? editing.id : ''}">
-          <label>Goal
-            <input name="title" required maxlength="120" placeholder="e.g. Study 30 minutes" value="${editing ? esc(editing.title) : ''}">
-          </label>
-          <label>Why it matters <span class="hint">Shown on hard days.</span>
-            <textarea name="why" maxlength="400" placeholder="e.g. I want to pass this class without the last-minute panic.">${editing ? esc(editing.why) : ''}</textarea>
-          </label>
+      <div class="section-title"><h2>Active bets</h2><span class="small muted">${active.length}</span></div>
+      ${active.length ? `<div class="stack">${active.map(b => betCard(b)).join('')}</div>` : `<div class="card soft"><p class="mb0">No active bets. ${locked.length ? 'Your Vault has something to earn back.' : 'Place one while you mean it.'}</p></div>`}
+
+      ${locked.length ? `<div class="section-title"><h2>In the Vault</h2><span class="small muted">${fmtCredits(locked.reduce((n, e) => n + e.amount, 0))} cr</span></div>
+        <div class="stack">${locked.map(e => entryCard(e, false)).join('')}</div>` : ''}
+
+      <div class="card soft mt"><h3>Today's prompt</h3><p class="mb0">${esc(todaysPrompt())}</p></div>`;
+  }
+
+  function bets() {
+    const t = now();
+    const filters = ['active', 'won', 'locked', 'cancelled', 'all'];
+    const list = state.bets.filter(b => ui.betFilter === 'all' || b.status === ui.betFilter).sort((a, b) => (b.createdAt - a.createdAt));
+    const dl = ui.deadlinePick === 'custom' ? (ui.customDeadline || t + 24 * HOUR) : quickDeadline(ui.deadlinePick);
+    const defaultTier = 1;
+    return `<div class="page-head"><div><h1>Bets</h1><p class="muted">Small enough to do on a bad day. Clear enough to prove.</p></div></div>
+      ${balancesBlock()}
+      <div class="card mt">
+        <h2>Place a bet</h2>
+        <form data-form="bet">
+          <label>What will you do? <input name="title" required maxlength="120" placeholder="e.g. Run 5 km" autocomplete="off"></label>
           <div class="form-row">
-            <label>Cadence
-              <select name="cadence">
-                <option value="daily" ${!editing || editing.cadence === 'daily' ? 'selected' : ''}>Daily</option>
-                <option value="weekly" ${editing && editing.cadence === 'weekly' ? 'selected' : ''}>Weekly</option>
-              </select>
-            </label>
-            <label>End date <span class="hint">optional</span>
-              <input type="date" name="endDate" value="${editing && editing.endDate ? editing.endDate : ''}">
-            </label>
+            <label>Stake <span class="hint" id="stake-hint">max ${RULES.MAX_STAKE_BY_TIER[defaultTier]} for this proof</span>
+              <input name="stake" type="number" min="1" step="1" required value="10" inputmode="numeric"></label>
+            <label>Proof
+              <select name="proofTier" data-action="tier-change">
+                <option value="0">Honor · max ${RULES.MAX_STAKE_BY_TIER[0]}</option>
+                <option value="1" selected>Live photo · max ${RULES.MAX_STAKE_BY_TIER[1]}</option>
+                <option value="2" disabled>Partner · max ${RULES.MAX_STAKE_BY_TIER[2]} (Phase 1)</option>
+                <option value="3" disabled>Integration · max ${RULES.MAX_STAKE_BY_TIER[3]} (Phase 1)</option>
+              </select></label>
           </div>
-          <div class="row">
-            <button class="primary" type="submit">${editing ? 'Save changes' : 'Add goal'}</button>
-            ${editing ? '<button type="button" data-action="cancel-edit">Cancel</button>' : ''}
-          </div>
+          <label>Deadline
+            <div class="quick">
+              ${[['tonight', 'Tonight 11:59'], ['1h', '+1 hour'], ['24h', '+24 hours'], ['3d', '+3 days'], ['7d', '+1 week'], ['custom', 'Custom']].map(([k, l]) =>
+                `<button type="button" class="sm ${ui.deadlinePick === k ? 'active' : ''}" data-action="deadline-pick" data-k="${k}">${l}</button>`).join('')}
+            </div>
+            <input type="datetime-local" name="deadline" value="${toLocalInput(dl)}" ${ui.deadlinePick === 'custom' ? '' : 'readonly'}>
+          </label>
+          <details>
+            <summary>More: how it's measured, why, where it goes if it decays</summary>
+            <div class="stack mt">
+              <div class="form-row">
+                <label>Measured as
+                  <select name="measureKind">
+                    <option value="binary">Did it / didn't</option>
+                    <option value="quantity">A quantity</option>
+                    <option value="duration">A duration</option>
+                  </select></label>
+                <label>Amount &amp; unit
+                  <div class="row" style="flex-wrap:nowrap"><input name="measureAmount" type="number" min="0.1" step="any" placeholder="5" style="max-width:40%"><input name="measureUnit" placeholder="km / pages / minutes"></div></label>
+              </div>
+              <label>Why it matters <input name="why" maxlength="200" placeholder="Shown on hard days."></label>
+              <label>If it decays, credits go to
+                <select name="destination">${Content.DESTINATIONS.map(d => `<option>${esc(d)}</option>`).join('')}</select></label>
+            </div>
+          </details>
+          <p class="small muted mb0">You can cancel within 10 minutes. After that it's live. Missed stakes are locked for 30 days, not lost.</p>
+          <div><button class="primary big-cta" type="submit">Stake it</button></div>
         </form>
       </div>
 
-      <div class="row spread mt">
-        <h2 class="mb0">${list.length ? 'Your goals' : ''}</h2>
-        <label class="row small" style="font-weight:400">
-          <input type="checkbox" data-action="toggle-archived" ${ui.showArchived ? 'checked' : ''} style="width:auto"> Show archived
-        </label>
-      </div>
-
-      <div class="stack mt">
-        ${list.length ? list.map(g => `
-          <div class="card goal-item ${g.archived ? 'archived' : ''}">
-            <div class="row spread">
-              <span class="title">${esc(g.title)} <span class="pill">${g.cadence}</span>${g.archived ? ' <span class="pill">archived</span>' : ''}</span>
-              <span class="small muted streak">streak ${streak(g)} · ${checkinsFor(g.id).length} check-ins</span>
-            </div>
-            ${g.why ? `<div class="why">${esc(g.why)}</div>` : ''}
-            ${g.endDate ? `<div class="small muted">Ends ${fmtDate(g.endDate)}</div>` : ''}
-            ${strip(g)}
-            <div class="row">
-              <button class="sm" data-action="edit-goal" data-goal="${g.id}">Edit</button>
-              <button class="sm" data-action="archive-goal" data-goal="${g.id}">${g.archived ? 'Unarchive' : 'Archive'}</button>
-              <button class="sm ghost danger" data-action="delete-goal" data-goal="${g.id}">Delete</button>
-            </div>
-          </div>`).join('') : `
-          <div class="empty"><div class="big">🎯</div>No goals yet. Add one above.</div>`}
-      </div>`;
+      <div class="section-title"><h2>Your bets</h2>
+        <div class="quick">${filters.map(f => `<button class="sm ${ui.betFilter === f ? 'active' : ''}" data-action="bet-filter" data-f="${f}">${f}</button>`).join('')}</div></div>
+      ${list.length ? `<div class="stack">${list.map(b => betCard(b)).join('')}</div>` : `<div class="empty"><div class="big">🎯</div>No ${ui.betFilter === 'all' ? '' : ui.betFilter + ' '}bets.</div>`}`;
   }
 
-  function checkins() {
-    const goalsList = activeGoals();
-    if (!goalsList.length) {
-      return `<div class="page-head"><h1>Check-ins</h1></div>
-        <div class="empty card"><div class="big">📝</div>Create a goal first, then come back here.<div class="mt"><button class="primary" data-action="nav" data-tab="goals">Go to Goals</button></div></div>`;
-    }
-    if (!ui.checkinGoalId || !goalsList.some(g => g.id === ui.checkinGoalId)) {
-      ui.checkinGoalId = (dueToday()[0] || goalsList[0]).id;
-    }
-    const goal = goalById(ui.checkinGoalId);
-    const today = checkinAt(goal, new Date());
-    const history = checkinsFor(goal.id).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
+  function vault() {
+    const locked = state.vault.filter(e => e.status === 'locked').sort((a, b) => a.decaysAt - b.decaysAt);
+    const history = state.vault.filter(e => e.status !== 'locked').sort((a, b) => b.lockedAt - a.lockedAt);
+    const st = Core.stats(state);
+    return `<div class="page-head"><div><h1>Vault</h1><p class="muted">Locked, not lost. Earn it back with something harder.</p></div></div>
+      ${balancesBlock()}
+      ${st.everLocked ? `<p class="small muted mt">Over time: ${fmtCredits(st.everLocked)} locked, ${fmtCredits(st.recovered)} recovered (${st.recoveryRate}%).</p>` : ''}
+      <div class="section-title"><h2>Locked</h2><span class="small muted">${locked.length}</span></div>
+      ${locked.length ? `<div class="stack">${locked.map(e => entryCard(e, true)).join('')}</div>` : `<div class="card soft"><p class="mb0">Nothing in the Vault. That's the goal.</p></div>`}
+      ${history.length ? `<div class="section-title"><h2>History</h2><button class="sm ghost" data-action="toggle-vault-history">${ui.vaultHistory ? 'Hide' : 'Show'} ${history.length}</button></div>
+        ${ui.vaultHistory ? `<div class="stack">${history.map(e => entryCard(e, true)).join('')}</div>` : ''}` : ''}
+      <div class="card soft mt"><h3>The harder rule</h3><p class="small mb0">A redemption must beat the original on at least one of: amount ×1.5, half the time window, or a stricter proof. The app checks, so you can't talk yourself into an easy one. Partial success unlocks a share and uses a chance; full success unlocks everything and costs nothing.</p></div>`;
+  }
 
-    return `
-      <div class="page-head">
-        <div><h1>Check-ins</h1><p class="muted">A miss is information. Write down what you learned.</p></div>
-      </div>
-
-      <div class="card">
-        <label>Goal
-          <select data-action="select-checkin-goal">
-            ${goalsList.map(g => `<option value="${g.id}" ${g.id === goal.id ? 'selected' : ''}>${esc(g.title)}${checkinAt(g, new Date()) ? ' ✓' : ''}</option>`).join('')}
-          </select>
-        </label>
-        ${goal.why ? `<p class="muted mt">Why: ${esc(goal.why)}</p>` : ''}
-        <div class="row small muted"><span>Streak ${streak(goal)}</span><span>·</span><span>${goal.cadence === 'weekly' ? 'Week of ' + fmtDate(periodKey(goal)) : 'Today ' + fmtDate(ymd())}</span></div>
-        ${strip(goal, 21)}
-      </div>
-
+  function ledger() {
+    const problems = Core.checkInvariants(state);
+    const b = Core.balances(state);
+    const rows = state.ledger.slice().reverse();
+    return `<div class="page-head"><div><h1>Ledger</h1><p class="muted">Every credit, accounted for.</p></div>
+        <span class="pill ${problems.length ? 'bad-badge' : 'ok-badge'}">${problems.length ? 'Imbalance' : 'Balanced'}</span></div>
+      ${balancesBlock()}
+      <p class="small muted mt">wallet ${fmtCredits(b.wallet)} + at stake ${fmtCredits(b.atStake)} + in vault ${fmtCredits(b.inVault)} + decayed ${fmtCredits(b.decayed)} = ${fmtCredits(b.total)} · granted ${fmtCredits(b.granted)}</p>
+      ${problems.length ? `<div class="card" style="border-color:var(--missed)"><strong>Problems</strong><ul>${problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
       <div class="card mt">
-        <h2>${today ? 'Update this period' : 'How did it go?'}</h2>
-        <form data-form="checkin">
-          <input type="hidden" name="goalId" value="${goal.id}">
-          <input type="hidden" name="status" value="${today ? today.status : ''}">
-          <div class="row">
-            <button type="button" class="status-btn done ${today && today.status === 'done' ? 'active' : ''}" data-action="pick-status" data-status="done">✓ Done</button>
-            <button type="button" class="status-btn partial ${today && today.status === 'partial' ? 'active' : ''}" data-action="pick-status" data-status="partial">◐ Partial</button>
-            <button type="button" class="status-btn missed ${today && today.status === 'missed' ? 'active' : ''}" data-action="pick-status" data-status="missed">✕ Missed</button>
-          </div>
-          <label>Note <span class="hint">What happened? Describe, don't judge.</span>
-            <textarea name="note" maxlength="600" placeholder="e.g. Did 20 of the 30 minutes before practice.">${today ? esc(today.note) : ''}</textarea>
-          </label>
-          <label>What did you learn? <span class="hint">The most important box on this page.</span>
-            <input name="learned" maxlength="200" placeholder="e.g. Mornings work better than after practice." value="${today ? esc(today.learned) : ''}">
-          </label>
-          <div class="row">
-            <button class="primary" type="submit">${today ? 'Save' : 'Log check-in'}</button>
-            ${today ? `<button type="button" class="ghost danger" data-action="delete-checkin" data-id="${today.id}">Remove</button>` : ''}
-          </div>
-        </form>
-      </div>
-
-      <div class="card mt">
-        <h2>History</h2>
-        ${history.length ? `<div class="history">${history.map(c => `
-          <div class="history-item">
-            <div class="date">${fmtDate(c.date)}</div>
-            <div>
-              <span class="pill ${c.status}">${c.status}</span>
-              ${c.note ? `<div>${esc(c.note)}</div>` : ''}
-              ${c.learned ? `<div class="learned small">Learned: ${esc(c.learned)}</div>` : ''}
-            </div>
-          </div>`).join('')}</div>` : '<p class="muted mb0">No check-ins yet for this goal.</p>'}
+        <table class="ledger"><thead><tr><th>When</th><th>What</th><th class="n">Δ</th><th class="n">Wallet</th></tr></thead><tbody>
+          ${rows.map(l => `<tr><td class="muted">${l.at ? esc(fmtWhen(l.at)) : '—'}</td><td><span class="pill">${l.reason}</span> ${esc(l.note)}</td>
+            <td class="n ${l.delta > 0 ? 'pos' : l.delta < 0 ? 'neg' : 'muted'}">${l.delta > 0 ? '+' : ''}${l.delta ? fmtCredits(l.delta) : '·'}</td><td class="n">${fmtCredits(l.balanceAfter)}</td></tr>`).join('')}
+        </tbody></table>
       </div>`;
-  }
-
-  function partners() {
-    const c = ui.composer;
-    const partner = state.partners.find(p => p.id === c.partnerId);
-    const goal = goalById(c.goalId) || activeGoals()[0];
-    const result = Feedback.analyze(c.text);
-    const label = Feedback.scoreLabel(result.score);
-    const lastLearned = goal ? (checkinsFor(goal.id).filter(x => x.learned).sort((a, b) => b.date.localeCompare(a.date))[0] || {}).learned : '';
-
-    return `
-      <div class="page-head">
-        <div><h1>Partners</h1><p class="muted">Accountability is a relationship. Make the climate supportive on purpose.</p></div>
-      </div>
-
-      <div class="grid">
-        <div class="card">
-          <h2>Your partners</h2>
-          ${state.partners.length ? `<div class="stack">${state.partners.map(p => `
-            <div class="row spread">
-              <div><strong>${esc(p.name)}</strong>${p.contact ? `<div class="small muted">${esc(p.contact)}</div>` : ''}</div>
-              <button class="sm ghost danger" data-action="delete-partner" data-id="${p.id}">Remove</button>
-            </div>`).join('')}</div>` : '<p class="muted">No partners yet. Add someone you trust to be honest and kind.</p>'}
-          <form data-form="partner" class="mt">
-            <div class="form-row">
-              <label>Name <input name="name" required maxlength="60" placeholder="e.g. Dad"></label>
-              <label>Contact <span class="hint">optional</span> <input name="contact" maxlength="100" placeholder="text, email, Discord…"></label>
-            </div>
-            <div><button class="primary" type="submit">Add partner</button></div>
-          </form>
-        </div>
-
-        <div class="card">
-          <h2>Progress report</h2>
-          <p class="muted small">A plain-text summary you can paste into a message to your partner.</p>
-          <pre class="report" id="report">${esc(buildReport())}</pre>
-          <div class="row mt">
-            <button data-action="copy-report">Copy report</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="card mt">
-        <h2>Feedback composer</h2>
-        <p class="muted small">Draft a message to your partner (or about their goal). Checkpoint flags phrases that tend to create a defensive climate and suggests a supportive rewrite, using Gibb's six pairs.</p>
-        <div class="form-row">
-          <label>To
-            <select data-action="composer-partner">
-              <option value="">— pick a partner —</option>
-              ${state.partners.map(p => `<option value="${p.id}" ${p.id === c.partnerId ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-            </select>
-          </label>
-          <label>About goal
-            <select data-action="composer-goal">
-              ${activeGoals().map(g => `<option value="${g.id}" ${goal && g.id === goal.id ? 'selected' : ''}>${esc(g.title)}</option>`).join('')}
-            </select>
-          </label>
-        </div>
-        <label class="mt">Your message
-          <textarea data-action="composer-text" rows="5" placeholder="Start typing… try 'you always' or 'obviously' to see the detector work.">${esc(c.text)}</textarea>
-        </label>
-        <div class="row spread mt">
-          <span class="small"><strong>Climate:</strong> ${label} ${result.flags.length ? `· ${result.flags.length} flag${result.flags.length === 1 ? '' : 's'}` : ''} ${result.supportiveHits ? `· ${result.supportiveHits} supportive phrase${result.supportiveHits === 1 ? '' : 's'}` : ''}</span>
-          <span class="small muted">${c.text.length} chars</span>
-        </div>
-        <div class="climate-meter mt" aria-label="Climate score ${result.score} of 100"><div style="width:${result.score}%"></div></div>
-
-        ${result.flags.length ? `<div class="flag-list mt">${result.flags.map(f => `
-          <div class="flag">
-            <div class="cat">${esc(f.label.defensive)} → ${esc(f.label.supportive)}</div>
-            <div>"<mark>${esc(f.match)}</mark>" — ${esc(f.label.tip)}</div>
-            <div class="swap small">Try: ${esc(f.suggestion)}</div>
-          </div>`).join('')}</div>` : (c.text.trim() ? '<p class="small muted mt">No defensive phrases spotted. Read it once more as the receiver would.</p>' : '')}
-
-        <div class="row mt">
-          <button data-action="copy-text" ${c.text.trim() ? '' : 'disabled'}>Copy message</button>
-          <button class="ghost" data-action="clear-text" ${c.text ? '' : 'disabled'}>Clear</button>
-        </div>
-
-        <h3 class="mt">Templates</h3>
-        <div class="templates">
-          ${Feedback.TEMPLATES.map((t, i) => `
-            <button data-action="use-template" data-i="${i}">
-              <strong>${esc(t.title)}</strong> <span class="pill accent">${esc(t.cat)}</span><br>
-              <span class="small muted">${esc(fillTemplate(t.text, partner, goal, lastLearned)).slice(0, 110)}…</span>
-            </button>`).join('')}
-        </div>
-      </div>`;
-  }
-
-  function fillTemplate(text, partner, goal, learned) {
-    return text
-      .replace(/\{name\}/g, partner ? partner.name : 'there')
-      .replace(/\{goal\}/g, goal ? goal.title : 'your goal')
-      .replace(/\{learned\}/g, learned || 'what you wrote down');
-  }
-
-  function buildReport() {
-    const gs = activeGoals();
-    if (!gs.length) return 'No active goals yet.';
-    const ws = weekStats();
-    const lines = [];
-    lines.push(`Checkpoint report — ${new Date().toLocaleDateString()}`);
-    if (state.settings.name) lines.push(`From: ${state.settings.name}`);
-    lines.push('');
-    lines.push(`This week: ${ws.total} check-ins, ${ws.rate == null ? 'n/a' : ws.rate + '%'} completion, ${ws.lessons} lessons logged`);
-    lines.push('');
-    for (const g of gs) {
-      const recent = lastNPeriods(g, 7).map(p => p.checkin ? ({ done: '✓', partial: '◐', missed: '✕' })[p.checkin.status] : '·').join('');
-      lines.push(`• ${g.title} (${g.cadence}) — streak ${streak(g)}  ${recent}`);
-      const learned = checkinsFor(g.id).filter(c => c.learned).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 2);
-      for (const c of learned) lines.push(`    learned ${fmtDate(c.date)}: ${c.learned}`);
-    }
-    lines.push('');
-    lines.push('Ask me: What got in the way? What would make it easier next week?');
-    return lines.join('\n');
   }
 
   function learn() {
-    return `
-      <div class="page-head">
-        <div><h1>Learn</h1><p class="muted">Why Checkpoint works the way it does.</p></div>
-      </div>
-      <div class="stack">
-        ${Content.LEARN.map(s => `
-          <section class="card learn-section" id="learn-${s.id}">
-            <h2>${esc(s.title)}</h2>
-            ${s.body.map(p => `<p>${esc(p)}</p>`).join('')}
-            ${s.quote ? `<blockquote>${esc(s.quote)}</blockquote>` : ''}
-            ${s.table ? `<table class="gibb"><thead><tr><th>Defensive</th><th>Supportive</th><th>Example rewrite</th></tr></thead><tbody>
-              ${s.table.map(r => `<tr><td>${esc(r[0])}</td><td><strong>${esc(r[1])}</strong></td><td>${esc(r[2])}</td></tr>`).join('')}
-            </tbody></table>` : ''}
-          </section>`).join('')}
-      </div>`;
+    return `<div class="page-head"><div><h1>Learn</h1><p class="muted">Why Vault works the way it does.</p></div></div>
+      <div class="stack">${Content.LEARN.map(s => `<section class="card learn-section" id="learn-${s.id}">
+        <h2>${esc(s.title)}</h2>${s.body.map(p => `<p>${esc(p)}</p>`).join('')}
+        ${s.quote ? `<blockquote>${esc(s.quote)}</blockquote>` : ''}
+        ${s.table ? `<table class="gibb"><thead><tr><th>Defensive</th><th>Supportive</th><th>Rewrite</th></tr></thead><tbody>${s.table.map(r => `<tr><td>${esc(r[0])}</td><td><strong>${esc(r[1])}</strong></td><td>${esc(r[2])}</td></tr>`).join('')}</tbody></table>` : ''}
+      </section>`).join('')}</div>`;
   }
 
   function settings() {
-    const counts = `${state.goals.length} goals · ${state.checkins.length} check-ins · ${state.partners.length} partners`;
-    return `
-      <div class="page-head"><div><h1>Settings</h1><p class="muted">Your data lives in this browser only.</p></div></div>
+    const off = state.settings.clockOffset || 0;
+    return `<div class="page-head"><div><h1>Settings</h1><p class="muted">Your data lives in this browser only.</p></div></div>
       <div class="stack">
-        <div class="card">
-          <h2>Profile</h2>
-          <form data-form="settings">
-            <label>Your name <span class="hint">Used in greetings and reports.</span>
-              <input name="name" maxlength="60" value="${esc(state.settings.name)}" placeholder="e.g. Sam">
-            </label>
-            <div><button class="primary" type="submit">Save</button></div>
-          </form>
-        </div>
-        <div class="card">
-          <h2>Backup &amp; move</h2>
-          <p class="muted small">${counts}. Export to a JSON file to back up or move to another computer, then import it there.</p>
-          <div class="row">
-            <button data-action="export">Export JSON</button>
-            <button data-action="import">Import JSON…</button>
-            <input type="file" id="import-file" accept="application/json,.json" class="hidden">
-          </div>
-        </div>
-        <div class="card">
-          <h2>Try it with sample data</h2>
-          <p class="muted small">Adds two goals and two weeks of check-ins so you can see how the dashboard looks. You can delete them anytime.</p>
-          <button data-action="sample">Load sample data</button>
-        </div>
-        <div class="card">
-          <h2>Danger zone</h2>
-          <p class="muted small">Delete everything stored by Checkpoint in this browser. This cannot be undone.</p>
-          <button class="danger" data-action="reset">Delete all data</button>
-        </div>
-        <div class="card soft">
-          <h3>About</h3>
-          <p class="small mb0">Checkpoint is open source under the MIT license. No accounts, no tracking, no server. If you want to improve it, the code is plain HTML, CSS, and JavaScript.</p>
-        </div>
+        <div class="card"><h2>Profile</h2>
+          <form data-form="settings"><label>Your name <input name="name" maxlength="60" value="${esc(state.settings.name)}" placeholder="e.g. Sam"></label>
+          <div><button class="primary" type="submit">Save</button></div></form></div>
+        <div class="card"><h2>Real money</h2>
+          <p class="small muted">Off, and not available yet (Phase 2). When it ships it will be opt-in, with a Stripe hold that is only captured if a stake decays, so we never hold your funds and never keep them.</p>
+          <label class="row" style="font-weight:400"><input type="checkbox" disabled style="width:auto"> Enable real money (coming later)</label></div>
+        <div class="card"><h2>Backup &amp; move</h2>
+          <p class="small muted">${state.bets.length} bets · ${state.vault.length} vault entries · ${state.ledger.length} ledger lines. Export to move to another computer. Photos are not included in the export (Phase 1).</p>
+          <div class="row"><button data-action="export">Export JSON</button><button data-action="import">Import JSON…</button>
+            <input type="file" id="import-file" accept="application/json,.json" class="hidden"></div></div>
+        <div class="card"><h2>Try it</h2>
+          <p class="small muted">Adds an active bet, a won bet, a locked entry with 2 chances left, and a redeemed entry.</p>
+          <button data-action="sample">Load sample data</button></div>
+        <div class="card"><h2>Time machine <span class="pill">testing</span></h2>
+          <p class="small muted">Jump the app's clock forward to watch deadlines pass, chances burn, and entries decay without waiting. Current offset: <strong>${off ? '+' + fmtDur(off) : 'none'}</strong>.</p>
+          <div class="quick">
+            <button class="sm" data-action="time" data-ms="${HOUR}">+1 hour</button>
+            <button class="sm" data-action="time" data-ms="${6 * HOUR}">+6 hours</button>
+            <button class="sm" data-action="time" data-ms="${DAY}">+1 day</button>
+            <button class="sm" data-action="time" data-ms="${7 * DAY}">+1 week</button>
+            <button class="sm" data-action="time" data-ms="${31 * DAY}">+31 days</button>
+            <button class="sm ghost" data-action="time" data-ms="0" ${off ? '' : 'disabled'}>Reset clock</button>
+          </div></div>
+        <div class="card"><h2>Danger zone</h2>
+          <p class="small muted">Delete everything Vault stored in this browser, including proof photos. Cannot be undone.</p>
+          <button class="danger" data-action="reset">Delete all data</button></div>
+        <div class="card soft"><h3>About</h3><p class="small mb0">Vault is open source (MIT). No accounts, no tracking, no server in Phase 0. Rules live in <code>js/core.js</code> and are covered by tests.</p></div>
       </div>`;
   }
 
-  // ---------- After render: wire things that need DOM state ----------
-  function afterRender() {
-    // Keep caret position sensible in the composer: re-focus if it was active.
-    if (ui.tab === 'partners' && ui.composerFocus) {
-      const ta = app.querySelector('[data-action="composer-text"]');
-      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
-      ui.composerFocus = false;
-    }
+  // ---------- sheets (prove / redeem) ----------
+  function sheet() {
+    const s = ui.sheet;
+    if (s.kind === 'prove-bet' || s.kind === 'prove-redemption') return proveSheet(s);
+    if (s.kind === 'redeem') return redeemSheet(s);
+    return '';
   }
 
-  // ---------- Actions ----------
-  function upsertCheckin(goalId, status, note, learned) {
-    const goal = goalById(goalId);
-    if (!goal) return;
-    const existing = checkinAt(goal, new Date());
-    if (existing) {
-      existing.status = status;
-      if (note != null) existing.note = note;
-      if (learned != null) existing.learned = learned;
-    } else {
-      state.checkins.push({ id: Storage.uid(), goalId, date: ymd(), status, note: note || '', learned: learned || '', createdAt: Date.now() });
-    }
+  function proveSheet(s) {
+    const isBet = s.kind === 'prove-bet';
+    const target = isBet ? Core.betById(state, s.id) : Core.redemptionById(state, s.id);
+    if (!target) { ui.sheet = null; return ''; }
+    const tier = target.proofTier;
+    const measured = target.measure && target.measure.kind !== 'binary';
+    const camOk = Camera.available() && !s.cameraError;
+    return `<div class="sheet-backdrop" data-action="close-sheet-backdrop"><div class="sheet" role="dialog" aria-modal="true">
+      <button class="ghost close" data-action="close-sheet" aria-label="Close">✕</button>
+      <h2>Prove it</h2>
+      <p><strong>${esc(target.title)}</strong> · ${esc(measureText(target.measure))} · ${countdown(target.deadline)}</p>
+      <form data-form="proof" data-kind="${s.kind}" data-id="${target.id}">
+        ${tier >= 1 ? `
+          <p class="small muted">Live photo. Your proof code <span class="code">${target.proofCode}</span> is stamped on the shot; have it in frame (write it on paper or show it on another screen).</p>
+          <div class="cam-wrap">
+            ${s.shot ? `<img class="shot" src="${s.shot}" alt="your proof photo">` :
+              camOk ? `<video class="cam" id="cam" playsinline muted></video><div class="cam-overlay">${target.proofCode}</div>` :
+              `<div class="card soft"><p class="mb0 small">Camera unavailable${s.cameraError ? ': ' + esc(s.cameraError) : ''}. You can self-attest; it will be marked "camera unavailable" in the ledger.</p></div>`}
+          </div>
+          <div class="row">
+            ${s.shot ? `<button type="button" data-action="retake">Retake</button>` : camOk ? `<button type="button" class="primary" data-action="capture">Take photo</button>` : ''}
+          </div>` : `
+          <label class="row" style="font-weight:500"><input type="checkbox" name="attest" required style="width:auto"> I did this. On my honor.</label>`}
+        ${!isBet && measured ? `<label>How much did you do? <span class="hint">target ${target.measure.amount} ${esc(target.measure.unit)}; less than the target unlocks a share and uses a chance</span>
+          <input name="done" type="number" min="0" step="any" value="${target.measure.amount}" required></label>` : ''}
+        <label>Note <span class="hint">optional</span><input name="note" maxlength="200" placeholder="How did it go?"></label>
+        <div class="row">
+          <button class="primary big-cta" type="submit" ${tier >= 1 && camOk && !s.shot ? 'disabled' : ''}>${isBet ? 'Submit proof, keep my ' + fmtCredits(target.stake) + ' credits' : 'Submit proof'}</button>
+        </div>
+      </form></div></div>`;
   }
 
+  function redeemSheet(s) {
+    const e = Core.entryById(state, s.id);
+    if (!e) { ui.sheet = null; return ''; }
+    const bet = Core.betById(state, e.betId);
+    const t = now();
+    const origWindow = bet.deadline - bet.createdAt;
+    const d = s.draft || (s.draft = {
+      title: bet.title + ' (harder)',
+      measureKind: bet.measure.kind === 'binary' ? 'quantity' : bet.measure.kind,
+      measureAmount: Math.ceil(bet.measure.amount * RULES.HARDER_MULTIPLIER * 10) / 10,
+      measureUnit: bet.measure.kind === 'binary' ? 'times' : bet.measure.unit,
+      deadline: Math.min(e.decaysAt, t + Math.max(RULES.MIN_WINDOW_MS, Math.floor(origWindow * RULES.HARDER_WINDOW_FRACTION))),
+      proofTier: bet.proofTier
+    });
+    const challenge = { measure: { kind: d.measureKind, amount: d.measureAmount, unit: d.measureUnit }, deadline: d.deadline, proofTier: d.proofTier };
+    let dims = [];
+    try { dims = Core.harderBy(bet, challenge, t); } catch (err) { dims = []; }
+    const dimLabel = (k, on, text) => `<span class="pill ${on ? 'on' : 'off'}">${text}</span>`;
+    const need = { quantity: `amount ≥ ${Core.round(bet.measure.amount * RULES.HARDER_MULTIPLIER)} ${esc(bet.measure.kind === 'binary' ? 'times' : bet.measure.unit)}`, deadline: `window ≤ ${fmtDur(origWindow * RULES.HARDER_WINDOW_FRACTION)}`, proof: 'stricter proof' };
+    return `<div class="sheet-backdrop" data-action="close-sheet-backdrop"><div class="sheet" role="dialog" aria-modal="true">
+      <button class="ghost close" data-action="close-sheet" aria-label="Close">✕</button>
+      <h2>Earn it back</h2>
+      <p>${fmtCredits(e.amount)} credits locked from <strong>${esc(bet.title)}</strong> (${esc(measureText(bet.measure))} in ${fmtDur(origWindow)}). ${e.chancesLeft} chance${e.chancesLeft === 1 ? '' : 's'} left.</p>
+      <form data-form="redeem" data-id="${e.id}">
+        <label>Challenge <input name="title" required maxlength="120" value="${esc(d.title)}"></label>
+        <div class="form-row">
+          <label>Measured as <select name="measureKind">
+            <option value="quantity" ${d.measureKind === 'quantity' ? 'selected' : ''}>A quantity</option>
+            <option value="duration" ${d.measureKind === 'duration' ? 'selected' : ''}>A duration</option>
+          </select></label>
+          <label>Amount &amp; unit <div class="row" style="flex-wrap:nowrap"><input name="measureAmount" type="number" min="0.1" step="any" value="${d.measureAmount}" style="max-width:40%"><input name="measureUnit" value="${esc(d.measureUnit)}"></div></label>
+        </div>
+        <div class="form-row">
+          <label>Deadline <input type="datetime-local" name="deadline" value="${toLocalInput(d.deadline)}"></label>
+          <label>Proof <select name="proofTier">
+            <option value="0" ${d.proofTier === 0 ? 'selected' : ''}>Honor</option>
+            <option value="1" ${d.proofTier === 1 ? 'selected' : ''}>Live photo</option>
+          </select></label>
+        </div>
+        <div class="harder"><strong>Harder by:</strong>
+          ${dimLabel('quantity', dims.includes('quantity') || dims.includes('duration'), need.quantity)}
+          ${dimLabel('deadline', dims.includes('deadline'), need.deadline)}
+          ${dimLabel('proof', dims.includes('proof'), need.proof)}
+        </div>
+        <p class="small muted mb0">Must finish before the entry decays (${esc(fmtWhen(e.decaysAt))}). Partial completion unlocks a proportional share.</p>
+        <div><button class="primary big-cta" type="submit" ${dims.length ? '' : 'disabled'}>${dims.length ? 'Start this challenge' : 'Not harder yet'}</button></div>
+      </form></div></div>`;
+  }
+
+  // ---------- after render ----------
+  async function afterRender() {
+    // proof thumbnails from IndexedDB
+    app.querySelectorAll('img[data-media]').forEach(img => Storage.getMedia(img.dataset.media).then(url => { if (url) img.src = url; else img.remove(); }));
+    // camera
+    const video = document.getElementById('cam');
+    if (video && !ui.sheet.shot) {
+      try { await Camera.start(video); }
+      catch (err) { ui.sheet.cameraError = err && err.message ? err.message : 'permission denied'; Camera.stop(); render(); }
+    } else if (!video) Camera.stop();
+  }
+
+  // live countdowns without re-rendering
+  setInterval(() => {
+    const t = now();
+    document.querySelectorAll('[data-countdown]').forEach(el => {
+      const left = Number(el.dataset.countdown) - t;
+      el.textContent = left < 0 ? 'overdue' : fmtDur(left) + (el.dataset.label ? ' ' + el.dataset.label : '');
+      el.classList.toggle('urgent', left < HOUR); el.classList.toggle('soon', left >= HOUR && left < 6 * HOUR);
+    });
+  }, 1000);
+  setInterval(() => { if (!ui.sheet) tickAndMaybeRender(); }, 30 * 1000);
+
+  // ---------- sample data ----------
   function loadSample() {
-    const g1 = { id: Storage.uid(), title: 'Study 30 minutes', why: 'Pass the class without last-minute panic.', cadence: 'daily', createdAt: Date.now(), endDate: null, archived: false };
-    const g2 = { id: Storage.uid(), title: 'Call Grandma', why: 'She likes hearing about school.', cadence: 'weekly', createdAt: Date.now(), endDate: null, archived: false };
-    state.goals.push(g1, g2);
-    const notes = [
-      ['done', 'Did it right after dinner.', 'Dinner → desk works.'],
-      ['done', '', ''],
-      ['partial', 'Only 15 min, practice ran late.', 'Practice days need a shorter version.'],
-      ['missed', 'Forgot completely.', 'I need a reminder on Fridays.'],
-      ['done', '', ''],
-      ['done', 'Studied with Jordan.', 'Studying with someone makes it easier.'],
-      ['done', '', ''],
-      ['partial', '', ''],
-      ['done', '', 'Morning sessions stick better.'],
-      ['done', '', ''],
-      ['missed', 'Sick.', ''],
-      ['done', '', ''],
-      ['done', '', '']
-    ];
-    notes.forEach((n, i) => {
-      const d = addDays(new Date(), -(notes.length - i));
-      state.checkins.push({ id: Storage.uid(), goalId: g1.id, date: ymd(d), status: n[0], note: n[1], learned: n[2], createdAt: Date.now() });
-    });
-    [-14, -7].forEach(off => {
-      state.checkins.push({ id: Storage.uid(), goalId: g2.id, date: ymd(addDays(new Date(), off)), status: 'done', note: '', learned: off === -7 ? 'Sunday afternoons are the best time.' : '', createdAt: Date.now() });
-    });
-    if (!state.partners.length) state.partners.push({ id: Storage.uid(), name: 'Dad', contact: '' });
+    const t = now();
+    const mk = (title, over, when) => Core.placeBet(state, Object.assign({ title, stake: 10, deadline: when + 24 * HOUR, proofTier: 1, destination: Content.DESTINATIONS[1], measure: { kind: 'binary' } }, over), when);
+    // won bet, 3 days ago
+    const w = mk('Read 20 pages', { stake: 10, measure: { kind: 'quantity', amount: 20, unit: 'pages' }, why: 'Finish the book before the test.' }, t - 3 * DAY);
+    Core.submitBetProof(state, w.id, { kind: 'self', cameraUnavailable: true, note: 'Sample' }, t - 3 * DAY + 5 * HOUR);
+    // redeemed entry: locked 5 days ago, redeemed 4 days ago
+    const r0 = mk('Run 3 km', { stake: 15, measure: { kind: 'quantity', amount: 3, unit: 'km' } }, t - 6 * DAY);
+    Core.tick(state, t - 5 * DAY + HOUR);
+    const e0 = Core.entryForBet(state, r0.id);
+    const red0 = Core.createRedemption(state, e0.id, { title: 'Run 5 km', measure: { kind: 'quantity', amount: 5, unit: 'km' }, deadline: t - 4 * DAY + 12 * HOUR, proofTier: 1 }, t - 5 * DAY + 2 * HOUR);
+    Core.submitRedemptionProof(state, red0.id, { kind: 'self', cameraUnavailable: true, done: 5, note: 'Sample' }, t - 4 * DAY + 3 * HOUR);
+    Core.setWhatGotInTheWay(state, e0.id, 'Rain, and no indoor backup plan.');
+    // locked entry with 2 chances left: placed 2 days ago, missed, one failed attempt
+    const l = mk('Study 45 minutes', { stake: 20, measure: { kind: 'duration', amount: 45, unit: 'minutes' }, why: 'Chem exam Friday.' }, t - 2 * DAY);
+    Core.tick(state, t - DAY + HOUR);
+    const e1 = Core.entryForBet(state, l.id);
+    Core.createRedemption(state, e1.id, { title: 'Study 70 minutes', measure: { kind: 'duration', amount: 70, unit: 'minutes' }, deadline: t - 6 * HOUR, proofTier: 1 }, t - DAY + 2 * HOUR);
+    Core.tick(state, t - 5 * HOUR);
+    Core.setWhatGotInTheWay(state, e1.id, 'Started at 10pm. Too late.');
+    // active bets
+    mk('Run 5 km', { stake: 25, deadline: t + 20 * HOUR, measure: { kind: 'quantity', amount: 5, unit: 'km' }, why: 'Race in March.' }, t - 2 * HOUR);
+    mk('No phone after 10pm', { stake: 5, proofTier: 0, deadline: t + 3 * DAY, destination: Content.DESTINATIONS[2] }, t - 30 * MIN);
+    if (!state.settings.name) state.settings.name = '';
   }
 
   function download(filename, text) {
     const blob = new Blob([text], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
 
-  async function copy(text, okMsg) {
-    try { await navigator.clipboard.writeText(text); toast(okMsg); }
-    catch (e) { toast('Could not copy — select the text and copy manually.'); }
+  function tryRun(fn, okMsg) {
+    try { const r = fn(); if (okMsg) toast(okMsg); commit(); return r; }
+    catch (err) { toast(err.message); return null; }
   }
 
-  // Click delegation
+  // ---------- events ----------
   document.addEventListener('click', (e) => {
     const nav = e.target.closest('[data-nav]');
-    if (nav) { e.preventDefault(); setTab(nav.dataset.nav); return; }
-
+    if (nav) { e.preventDefault(); ui.sheet = null; setTab(nav.dataset.nav); return; }
     const btn = e.target.closest('[data-action]');
-    if (!btn || !app.contains(btn)) return;
+    if (!btn) return;
     const a = btn.dataset.action;
+    if (a === 'close-sheet-backdrop' && e.target !== btn) return; // click inside the sheet
 
     switch (a) {
-      case 'nav': setTab(btn.dataset.tab); break;
+      case 'nav': ui.sheet = null; setTab(btn.dataset.tab); break;
+      case 'close-sheet': case 'close-sheet-backdrop': ui.sheet = null; Camera.stop(); render(); break;
 
-      case 'quick-checkin':
-        upsertCheckin(btn.dataset.goal, btn.dataset.status);
-        toast(btn.dataset.status === 'missed' ? 'Logged. What did you learn? Add it under Check-ins.' : 'Logged ✓');
+      case 'open-prove-bet': ui.sheet = { kind: 'prove-bet', id: btn.dataset.id }; render(); break;
+      case 'open-prove-redemption': ui.sheet = { kind: 'prove-redemption', id: btn.dataset.id }; render(); break;
+      case 'open-redeem': ui.sheet = { kind: 'redeem', id: btn.dataset.id }; render(); break;
+
+      case 'capture': {
+        const v = document.getElementById('cam'); if (!v) break;
+        const target = ui.sheet.kind === 'prove-bet' ? Core.betById(state, ui.sheet.id) : Core.redemptionById(state, ui.sheet.id);
+        ui.sheet.shot = Camera.capture(v, target.proofCode); Camera.stop(); render(); break;
+      }
+      case 'retake': ui.sheet.shot = null; render(); break;
+
+      case 'cancel-bet': tryRun(() => Core.cancelBet(state, btn.dataset.id, now()), 'Cancelled. Stake returned.'); break;
+
+      case 'deadline-pick': ui.deadlinePick = btn.dataset.k; if (btn.dataset.k === 'custom') ui.customDeadline = now() + 24 * HOUR; render(); setTimeout(() => { const el = app.querySelector('[name="title"]'); if (el) el.focus(); }, 0); break;
+      case 'bet-filter': ui.betFilter = btn.dataset.f; render(); break;
+      case 'toggle-vault-history': ui.vaultHistory = !ui.vaultHistory; render(); break;
+
+      case 'time': {
+        const ms = Number(btn.dataset.ms);
+        state.settings.clockOffset = ms === 0 ? 0 : (state.settings.clockOffset || 0) + ms;
+        Storage.save(state);
+        const ev = Core.tick(state, now());
+        toast(ms === 0 ? 'Clock reset.' : `Jumped forward ${fmtDur(ms)}. ${ev.length ? ev.length + ' thing' + (ev.length === 1 ? '' : 's') + ' happened.' : 'Nothing changed yet.'}`);
         commit(); break;
-
-      case 'edit-goal': ui.editingGoalId = btn.dataset.goal; render(); window.scrollTo({ top: 0 }); break;
-      case 'cancel-edit': ui.editingGoalId = null; render(); break;
-      case 'archive-goal': { const g = goalById(btn.dataset.goal); g.archived = !g.archived; commit(); break; }
-      case 'delete-goal': {
-        const g = goalById(btn.dataset.goal);
-        if (confirm(`Delete "${g.title}" and all its check-ins? This cannot be undone.`)) {
-          state.goals = state.goals.filter(x => x.id !== g.id);
-          state.checkins = state.checkins.filter(c => c.goalId !== g.id);
-          if (ui.editingGoalId === g.id) ui.editingGoalId = null;
-          commit(); toast('Goal deleted');
-        }
-        break;
       }
-
-      case 'pick-status': {
-        const form = btn.closest('form');
-        form.elements.status.value = btn.dataset.status;
-        form.querySelectorAll('.status-btn').forEach(b => b.classList.toggle('active', b === btn));
-        break;
-      }
-      case 'delete-checkin':
-        state.checkins = state.checkins.filter(c => c.id !== btn.dataset.id); commit(); toast('Check-in removed'); break;
-
-      case 'delete-partner':
-        state.partners = state.partners.filter(p => p.id !== btn.dataset.id);
-        if (ui.composer.partnerId === btn.dataset.id) ui.composer.partnerId = '';
-        commit(); break;
-
-      case 'copy-report': copy(buildReport(), 'Report copied'); break;
-      case 'copy-text': copy(ui.composer.text, 'Message copied'); break;
-      case 'clear-text': ui.composer.text = ''; render(); break;
-      case 'use-template': {
-        const t = Feedback.TEMPLATES[Number(btn.dataset.i)];
-        const partner = state.partners.find(p => p.id === ui.composer.partnerId);
-        const goal = goalById(ui.composer.goalId) || activeGoals()[0];
-        const learned = goal ? (checkinsFor(goal.id).filter(x => x.learned).sort((a, b) => b.date.localeCompare(a.date))[0] || {}).learned : '';
-        ui.composer.text = fillTemplate(t.text, partner, goal, learned);
-        ui.composerFocus = true; render(); break;
-      }
-
-      case 'export': download(`checkpoint-${ymd()}.json`, Storage.exportJSON(state)); break;
+      case 'export': download(`vault-${new Date(now()).toISOString().slice(0, 10)}.json`, Storage.exportJSON(state)); break;
       case 'import': document.getElementById('import-file').click(); break;
-      case 'sample': loadSample(); commit(); toast('Sample data added'); setTab('dashboard'); break;
+      case 'sample': tryRun(loadSample, 'Sample data added'); setTab('today'); break;
       case 'reset':
-        if (confirm('Delete ALL Checkpoint data in this browser? This cannot be undone.')) {
-          Storage.clear(); state = Storage.blank(); ui.editingGoalId = null; ui.checkinGoalId = null;
-          commit(); toast('All data deleted');
+        if (confirm('Delete ALL Vault data in this browser, including proof photos? This cannot be undone.')) {
+          Storage.clear(); Storage.clearMedia(); state = Core.blank(); ui.sheet = null; commit(); toast('All data deleted');
         }
         break;
     }
   });
 
-  // Change delegation (selects, checkboxes, file input)
   document.addEventListener('change', (e) => {
     const el = e.target;
-    if (!app.contains(el)) return;
-    switch (el.dataset.action) {
-      case 'toggle-archived': ui.showArchived = el.checked; render(); break;
-      case 'select-checkin-goal': ui.checkinGoalId = el.value; render(); break;
-      case 'composer-partner': ui.composer.partnerId = el.value; render(); break;
-      case 'composer-goal': ui.composer.goalId = el.value; render(); break;
-    }
     if (el.id === 'import-file' && el.files && el.files[0]) {
       const reader = new FileReader();
       reader.onload = () => {
         try {
           const incoming = Storage.importJSON(reader.result);
-          if (confirm(`Import ${incoming.goals.length} goals and ${incoming.checkins.length} check-ins? This replaces your current data.`)) {
-            state = incoming; commit(); toast('Imported');
-          }
+          if (confirm(`Import ${incoming.bets.length} bets and ${incoming.vault.length} vault entries? This replaces your current data.`)) { state = incoming; commit(); toast('Imported'); }
         } catch (err) { alert(err.message); }
       };
-      reader.readAsText(el.files[0]);
-      el.value = '';
+      reader.readAsText(el.files[0]); el.value = ''; return;
+    }
+    if (el.dataset.action === 'tier-change') {
+      const hint = document.getElementById('stake-hint'); const max = RULES.MAX_STAKE_BY_TIER[Number(el.value)];
+      if (hint) hint.textContent = `max ${max} for this proof`;
+      const stake = el.form.elements.stake; if (Number(stake.value) > max) stake.value = max;
+      return;
+    }
+    if (el.name === 'deadline' && el.form && el.form.dataset.form === 'bet') { ui.customDeadline = new Date(el.value).getTime(); return; }
+    // redemption builder: live "harder by"
+    const rf = el.closest('form[data-form="redeem"]');
+    if (rf && ui.sheet && ui.sheet.kind === 'redeem') {
+      const f = Object.fromEntries(new FormData(rf).entries());
+      ui.sheet.draft = { title: f.title, measureKind: f.measureKind, measureAmount: Number(f.measureAmount), measureUnit: f.measureUnit, deadline: new Date(f.deadline).getTime(), proofTier: Number(f.proofTier) };
+      render();
     }
   });
 
-  // Live composer analysis (debounced re-render keeps typing smooth)
-  let composerTimer;
+  // save "what got in the way" as they type (debounced)
+  let wgTimer;
   document.addEventListener('input', (e) => {
     const el = e.target;
-    if (el.dataset.action === 'composer-text') {
-      ui.composer.text = el.value;
-      clearTimeout(composerTimer);
-      composerTimer = setTimeout(() => { ui.composerFocus = document.activeElement === el; render(); }, 350);
+    if (el.dataset.action === 'wgitw') {
+      clearTimeout(wgTimer);
+      wgTimer = setTimeout(() => { Core.setWhatGotInTheWay(state, el.dataset.id, el.value); Storage.save(state); }, 400);
     }
+    if (el.name === 'title' && el.closest('form[data-form="redeem"]') && ui.sheet) ui.sheet.draft.title = el.value;
   });
 
-  // Form submits
   document.addEventListener('submit', (e) => {
     const form = e.target.closest('form[data-form]');
-    if (!form || !app.contains(form)) return;
+    if (!form) return;
     e.preventDefault();
     const f = Object.fromEntries(new FormData(form).entries());
+    const t = now();
 
     switch (form.dataset.form) {
-      case 'goal': {
-        const data = { title: f.title.trim(), why: (f.why || '').trim(), cadence: f.cadence === 'weekly' ? 'weekly' : 'daily', endDate: f.endDate || null };
-        if (!data.title) return;
-        if (f.id) { Object.assign(goalById(f.id), data); ui.editingGoalId = null; toast('Goal updated'); }
-        else { state.goals.push(Object.assign({ id: Storage.uid(), createdAt: Date.now(), archived: false }, data)); toast('Goal added'); }
-        commit(); break;
+      case 'bet': {
+        const deadline = ui.deadlinePick === 'custom' ? new Date(f.deadline).getTime() : quickDeadline(ui.deadlinePick);
+        const measure = f.measureKind === 'binary' || !f.measureAmount ? { kind: 'binary' } : { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit || undefined };
+        const bet = tryRun(() => Core.placeBet(state, { title: f.title, why: f.why, stake: Number(f.stake), deadline, proofTier: Number(f.proofTier), destination: f.destination || Content.DESTINATIONS[0], measure }, t));
+        if (bet) { toast(`Staked ${fmtCredits(bet.stake)} on "${bet.title}". Prove it by ${fmtWhen(bet.deadline)}.`); ui.betFilter = 'active'; setTab('today'); }
+        break;
       }
-      case 'checkin': {
-        if (!f.status) { toast('Pick Done, Partial, or Missed first.'); return; }
-        upsertCheckin(f.goalId, f.status, (f.note || '').trim(), (f.learned || '').trim());
-        toast(f.status === 'missed' ? 'Logged. Misses with a lesson are still progress.' : 'Check-in saved ✓');
-        commit(); break;
+      case 'proof': {
+        const kind = form.dataset.kind, id = form.dataset.id;
+        const target = kind === 'prove-bet' ? Core.betById(state, id) : Core.redemptionById(state, id);
+        const needsPhoto = target.proofTier >= 1;
+        const shot = ui.sheet && ui.sheet.shot;
+        const cameraUnavailable = needsPhoto && !shot;
+        const finish = (mediaKey) => {
+          const proof = { kind: shot ? 'photo' : 'self', mediaKey, note: f.note, cameraUnavailable, done: f.done != null ? Number(f.done) : 1 };
+          const res = tryRun(() => kind === 'prove-bet' ? Core.submitBetProof(state, id, proof, t) : Core.submitRedemptionProof(state, id, proof, t));
+          if (!res) return;
+          ui.sheet = null; Camera.stop();
+          if (kind === 'prove-bet') toast(`Proved it. ${fmtCredits(target.stake)} credits back in your wallet.`);
+          else if (res.fraction >= 1) toast(`Earned back ${fmtCredits(res.unlocked)} credits. Entry closed.`);
+          else if (res.fraction > 0) toast(`Partial: ${fmtCredits(res.unlocked)} credits unlocked. One chance used.`);
+          else toast('Logged as a miss. One chance used. What got in the way?');
+          commit();
+        };
+        if (shot) { const key = Core.uid('media'); Storage.putMedia(key, shot).then(() => finish(key)).catch(() => finish(null)); }
+        else finish(null);
+        break;
       }
-      case 'partner': {
-        if (!f.name.trim()) return;
-        state.partners.push({ id: Storage.uid(), name: f.name.trim(), contact: (f.contact || '').trim() });
-        commit(); toast('Partner added'); break;
+      case 'redeem': {
+        const challenge = { title: f.title, measure: { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit }, deadline: new Date(f.deadline).getTime(), proofTier: Number(f.proofTier) };
+        const r = tryRun(() => Core.createRedemption(state, form.dataset.id, challenge, t));
+        if (r) { ui.sheet = null; toast(`Challenge on. Harder by ${r.harderBy.join(', ')}. ${fmtWhen(r.deadline)}.`); commit(); }
+        break;
       }
-      case 'settings': {
-        state.settings.name = (f.name || '').trim(); commit(); toast('Saved'); break;
-      }
+      case 'settings': state.settings.name = (f.name || '').trim(); commit(); toast('Saved'); break;
     }
   });
 
-  // ---------- Boot ----------
-  setTab(location.hash.slice(1) || 'dashboard');
+  // ---------- boot ----------
+  Core.tick(state, now()); Storage.save(state);
+  setTab(location.hash.slice(1) || 'today');
 })();

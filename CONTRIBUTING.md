@@ -1,4 +1,4 @@
-# Contributing to Checkpoint
+# Contributing to Vault
 
 Thanks for helping. This project is deliberately simple: no build tools,
 no framework, no dependencies. Please keep it that way unless a change
@@ -9,7 +9,7 @@ really needs otherwise.
 - **Plain HTML/CSS/JS.** ES2020 is fine; no bundlers.
 - **Data stays local by default.** Any networked feature must be opt-in.
 - **Supportive climate applies to us too.** Code review comments should be
-  descriptive, not evaluative; provisional, not certain. See the Learn tab.
+  descriptive, not evaluative; provisional, not certain. See the Learn tab. Rules live in `js/core.js`; every rule change needs a test in `tests/`.
 
 ## Workflow
 
@@ -22,6 +22,7 @@ really needs otherwise.
 
 | Want to… | Edit |
 |---|---|
+| Change a rule (stakes, harder, decay) | `js/core.js` + `tests/core.test.js` |
 | Change layout or add a tab | `index.html`, `js/app.js` |
 | Change styles | `css/style.css` |
 | Change how data is saved | `js/storage.js` |

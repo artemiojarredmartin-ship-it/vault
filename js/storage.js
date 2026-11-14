@@ -1,58 +1,80 @@
-/* Checkpoint — storage layer.
- * Everything lives in localStorage under one key. No network.
+/* Vault — storage layer.
+ * State lives in localStorage under one key. Proof photos live in IndexedDB
+ * (they're too big for localStorage). No network.
  */
 (function (global) {
   'use strict';
 
-  const KEY = 'checkpoint.v1';
-
-  function blank() {
-    return {
-      version: 1,
-      goals: [],
-      checkins: [],
-      partners: [],
-      settings: { name: '' }
-    };
-  }
+  const KEY = 'vault.v1';
+  const DB_NAME = 'vault-media', STORE = 'media';
 
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
-      if (!raw) return blank();
+      if (!raw) return Core.blank();
       const data = JSON.parse(raw);
-      // Fill any missing top-level fields so older saves still work.
-      return Object.assign(blank(), data, { settings: Object.assign(blank().settings, data.settings || {}) });
+      return normalize(data);
     } catch (e) {
-      console.warn('Checkpoint: could not read saved data, starting fresh.', e);
-      return blank();
+      console.warn('Vault: could not read saved data, starting fresh.', e);
+      return Core.blank();
     }
   }
 
-  function save(state) {
-    localStorage.setItem(KEY, JSON.stringify(state));
+  function normalize(data) {
+    const b = Core.blank();
+    const out = Object.assign(b, data);
+    for (const k of ['bets', 'proofs', 'vault', 'redemptions', 'ledger', 'partners']) if (!Array.isArray(out[k])) out[k] = [];
+    out.wallet = Object.assign({ credits: 0 }, data.wallet || {});
+    out.settings = Object.assign(Core.blank().settings, { clockOffset: 0 }, data.settings || {});
+    return out;
   }
 
-  function exportJSON(state) {
-    return JSON.stringify(state, null, 2);
-  }
+  function save(state) { localStorage.setItem(KEY, JSON.stringify(state)); }
+  function exportJSON(state) { return JSON.stringify(state, null, 2); }
 
-  /** Validate and return an imported state, or throw with a readable message. */
   function importJSON(text) {
     let data;
     try { data = JSON.parse(text); } catch (e) { throw new Error('That file is not valid JSON.'); }
-    if (!data || typeof data !== 'object') throw new Error('That file does not look like Checkpoint data.');
-    if (!Array.isArray(data.goals) || !Array.isArray(data.checkins)) {
-      throw new Error('Missing goals or check-ins. Is this a Checkpoint export?');
+    if (!data || typeof data !== 'object' || !Array.isArray(data.bets) || !Array.isArray(data.ledger)) {
+      throw new Error('That file does not look like a Vault export.');
     }
-    return Object.assign(blank(), data);
+    const s = normalize(data);
+    const problems = Core.checkInvariants(s);
+    if (problems.length) throw new Error('Import refused, the money does not balance: ' + problems[0]);
+    return s;
   }
 
   function clear() { localStorage.removeItem(KEY); }
 
-  function uid() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  // ---------- IndexedDB for proof media ----------
+  let dbPromise = null;
+  function db() {
+    if (!dbPromise) {
+      dbPromise = new Promise((resolve, reject) => {
+        if (!('indexedDB' in global)) return reject(new Error('IndexedDB unavailable'));
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    return dbPromise;
+  }
+  function putMedia(key, dataUrl) {
+    return db().then(d => new Promise((res, rej) => {
+      const tx = d.transaction(STORE, 'readwrite'); tx.objectStore(STORE).put(dataUrl, key);
+      tx.oncomplete = () => res(key); tx.onerror = () => rej(tx.error);
+    }));
+  }
+  function getMedia(key) {
+    return db().then(d => new Promise((res, rej) => {
+      const req = d.transaction(STORE).objectStore(STORE).get(key);
+      req.onsuccess = () => res(req.result || null); req.onerror = () => rej(req.error);
+    })).catch(() => null);
+  }
+  function clearMedia() {
+    return db().then(d => new Promise((res) => { const tx = d.transaction(STORE, 'readwrite'); tx.objectStore(STORE).clear(); tx.oncomplete = res; tx.onerror = res; })).catch(() => {});
   }
 
-  global.Storage = { KEY, blank, load, save, exportJSON, importJSON, clear, uid };
+  global.Storage = { KEY, load, save, exportJSON, importJSON, clear, putMedia, getMedia, clearMedia };
 })(window);

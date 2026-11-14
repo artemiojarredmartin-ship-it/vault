@@ -1,4 +1,8 @@
-# Design notes
+# Design notes (Checkpoint prototype — historical)
+
+> The current product is **Vault**; see [VAULT_DESIGN.md](VAULT_DESIGN.md).
+> These notes describe the Checkpoint prototype this repo grew from.
+
 
 ## Why this exists
 
