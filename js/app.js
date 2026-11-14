@@ -13,7 +13,8 @@
     sheet: null,            // { kind: 'prove-bet'|'prove-redemption'|'redeem', id, shot?, cameraError? }
     vaultHistory: false,
     betFilter: 'active',
-    deadlinePick: '24h'
+    deadlinePick: '24h',
+    away: []            // locks/decays that happened since the last visit
   };
 
   const app = document.getElementById('app');
@@ -141,6 +142,8 @@
       ${b.status === 'active' ? `<div class="row">
         <button class="primary" data-action="open-prove-bet" data-id="${b.id}">Prove it</button>
         ${canCancel ? `<button class="ghost" data-action="cancel-bet" data-id="${b.id}">Cancel (${fmtDur(RULES.COOLING_OFF_MS - (t - b.createdAt))} left)</button>` : ''}
+        ${!canCancel && !b.extended && state.grace.tokens > 0 ? `<button class="ghost" data-action="extend-bet" data-id="${b.id}" title="Spend a grace token">+24h grace</button>` : ''}
+        ${b.extended ? '<span class="pill">extended</span>' : ''}
       </div>` : ''}
       ${entry && entry.status === 'locked' && opts.redeemButton !== false ? `<div class="row"><button data-action="nav" data-tab="vault">Open in Vault</button></div>` : ''}
     </div>`;
@@ -207,9 +210,17 @@
     return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">${esc(new Date(t).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}</p></div>
         <button class="primary" data-action="nav" data-tab="bets">New bet</button></div>
       ${balancesBlock()}
+      ${ui.away.length ? `<div class="card mt" style="border-color:var(--partial)">
+        <div class="row spread"><h2 class="mb0">While you were away</h2><button class="sm ghost" data-action="dismiss-away">Dismiss</button></div>
+        ${ui.away.map(a => a.type === 'locked'
+          ? `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" missed. <strong>${fmtCredits(a.amount)}</strong> credits are in the Vault, not gone. ${a.chances} chances to earn them back.</p>`
+          : `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" decayed. ${fmtCredits(a.amount)} credits went to ${esc(a.destination)}.</p>`).join('')}
+        ${ui.away.some(a => a.type === 'locked') ? `<div class="row mt"><button class="primary" data-action="nav" data-tab="vault">Earn it back</button></div>` : ''}
+      </div>` : ''}
       <div class="row small muted mt" style="gap:1rem">
         <span>Win rate <strong>${st.winRate == null ? '—' : st.winRate + '%'}</strong></span>
         <span>Streak <strong>${st.streak}</strong></span>
+        <span title="Earn one every 3 wins in a row. Spend one to extend a bet 24h.">Grace <strong>${state.grace.tokens}</strong>/${RULES.GRACE_MAX}</span>
         <span>Saved by proving it <strong>${fmtCredits(st.saved)}</strong></span>
         ${st.everLocked ? `<span>Recovered <strong>${st.recoveryRate}%</strong></span>` : ''}
       </div>
@@ -233,6 +244,7 @@
       ${balancesBlock()}
       <div class="card mt">
         <h2>Place a bet</h2>
+        <div class="quick" style="margin-bottom:.75rem">${Content.TEMPLATES.map((tpl, i) => `<button type="button" class="sm" data-action="template" data-i="${i}">${esc(tpl.label)}</button>`).join('')}</div>
         <form data-form="bet">
           <label>What will you do? <input name="title" required maxlength="120" placeholder="e.g. Run 5 km" autocomplete="off"></label>
           <div class="form-row">
@@ -332,7 +344,7 @@
           <p class="small muted">Off, and not available yet (Phase 2). When it ships it will be opt-in, with a Stripe hold that is only captured if a stake decays, so we never hold your funds and never keep them.</p>
           <label class="row" style="font-weight:400"><input type="checkbox" disabled style="width:auto"> Enable real money (coming later)</label></div>
         <div class="card"><h2>Backup &amp; move</h2>
-          <p class="small muted">${state.bets.length} bets · ${state.vault.length} vault entries · ${state.ledger.length} ledger lines. Export to move to another computer. Photos are not included in the export (Phase 1).</p>
+          <p class="small muted">${state.bets.length} bets · ${state.vault.length} vault entries · ${state.ledger.length} ledger lines. Export to move to another computer. Proof photos are included.</p>
           <div class="row"><button data-action="export">Export JSON</button><button data-action="import">Import JSON…</button>
             <input type="file" id="import-file" accept="application/json,.json" class="hidden"></div></div>
         <div class="card"><h2>Try it</h2>
@@ -446,6 +458,9 @@
 
   // ---------- after render ----------
   async function afterRender() {
+    // focus the first field of an open sheet
+    const first = sheetRoot.querySelector('input:not([type=hidden]):not([type=checkbox]), select, textarea, button.primary');
+    if (first && !sheetRoot.contains(document.activeElement)) setTimeout(() => first.focus(), 0);
     // proof thumbnails from IndexedDB
     app.querySelectorAll('img[data-media]').forEach(img => Storage.getMedia(img.dataset.media).then(url => { if (url) img.src = url; else img.remove(); }));
     // camera
@@ -466,6 +481,24 @@
     });
   }, 1000);
   setInterval(() => { if (!ui.sheet) tickAndMaybeRender(); }, 30 * 1000);
+
+  // ---------- celebration ----------
+  function celebrate() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const c = document.createElement('canvas');
+    c.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40';
+    c.width = innerWidth; c.height = innerHeight; document.body.appendChild(c);
+    const ctx = c.getContext('2d');
+    const colors = ['#2f6fed', '#1e9d64', '#f0b43c', '#ef6b6b', '#6a9bff'];
+    const parts = Array.from({ length: 120 }, () => ({ x: c.width / 2, y: c.height / 3, vx: (Math.random() - .5) * 14, vy: -Math.random() * 12 - 4, r: 4 + Math.random() * 4, col: colors[Math.floor(Math.random() * colors.length)], rot: Math.random() * 6 }));
+    const t0 = performance.now();
+    (function frame(t) {
+      const dt = (t - t0) / 1000;
+      ctx.clearRect(0, 0, c.width, c.height);
+      for (const p of parts) { p.vy += .35; p.x += p.vx; p.y += p.vy; p.rot += .1; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.col; ctx.globalAlpha = Math.max(0, 1 - dt / 1.8); ctx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * .6); ctx.restore(); }
+      if (dt < 1.9) requestAnimationFrame(frame); else c.remove();
+    })(t0);
+  }
 
   // ---------- sample data ----------
   function loadSample() {
@@ -530,6 +563,18 @@
       case 'retake': ui.sheet.shot = null; render(); break;
 
       case 'cancel-bet': tryRun(() => Core.cancelBet(state, btn.dataset.id, now()), 'Cancelled. Stake returned.'); break;
+      case 'extend-bet': tryRun(() => Core.extendBet(state, btn.dataset.id, now()), 'Deadline pushed back 24 hours. Grace token spent.'); break;
+      case 'dismiss-away': ui.away = []; render(); break;
+      case 'template': {
+        const tpl = Content.TEMPLATES[Number(btn.dataset.i)];
+        ui.deadlinePick = tpl.deadline; render();
+        const f = app.querySelector('form[data-form="bet"]'); if (!f) break;
+        f.elements.title.value = tpl.title; f.elements.stake.value = tpl.stake; f.elements.proofTier.value = String(tpl.proofTier);
+        f.elements.measureKind.value = tpl.measure.kind; f.elements.measureAmount.value = tpl.measure.amount || ''; f.elements.measureUnit.value = tpl.measure.unit || '';
+        f.elements.proofTier.dispatchEvent(new Event('change', { bubbles: true }));
+        f.elements.title.focus(); f.elements.title.select();
+        break;
+      }
 
       case 'deadline-pick': ui.deadlinePick = btn.dataset.k; if (btn.dataset.k === 'custom') ui.customDeadline = now() + 24 * HOUR; render(); setTimeout(() => { const el = app.querySelector('[name="title"]'); if (el) el.focus(); }, 0); break;
       case 'bet-filter': ui.betFilter = btn.dataset.f; render(); break;
@@ -543,7 +588,7 @@
         toast(ms === 0 ? 'Clock reset.' : `Jumped forward ${fmtDur(ms)}. ${ev.length ? ev.length + ' thing' + (ev.length === 1 ? '' : 's') + ' happened.' : 'Nothing changed yet.'}`);
         commit(); break;
       }
-      case 'export': download(`vault-${new Date(now()).toISOString().slice(0, 10)}.json`, Storage.exportJSON(state)); break;
+      case 'export': Storage.exportJSONWithMedia(state).then(json => download(`vault-${new Date(now()).toISOString().slice(0, 10)}.json`, json)); break;
       case 'import': document.getElementById('import-file').click(); break;
       case 'sample': tryRun(loadSample, 'Sample data added'); setTab('today'); break;
       case 'reset':
@@ -560,8 +605,10 @@
       const reader = new FileReader();
       reader.onload = () => {
         try {
-          const incoming = Storage.importJSON(reader.result);
-          if (confirm(`Import ${incoming.bets.length} bets and ${incoming.vault.length} vault entries? This replaces your current data.`)) { state = incoming; commit(); toast('Imported'); }
+          const { state: incoming, media } = Storage.importJSON(reader.result);
+          if (confirm(`Import ${incoming.bets.length} bets and ${incoming.vault.length} vault entries? This replaces your current data.`)) {
+            state = incoming; commit(); Storage.restoreMedia(media).then(n => { toast(`Imported${n ? ' with ' + n + ' photo' + (n === 1 ? '' : 's') : ''}`); render(); });
+          }
         } catch (err) { alert(err.message); }
       };
       reader.readAsText(el.files[0]); el.value = ''; return;
@@ -580,6 +627,10 @@
       ui.sheet.draft = { title: f.title, measureKind: f.measureKind, measureAmount: Number(f.measureAmount), measureUnit: f.measureUnit, deadline: new Date(f.deadline).getTime(), proofTier: Number(f.proofTier) };
       render();
     }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && ui.sheet) { ui.sheet = null; Camera.stop(); render(); }
   });
 
   // save "what got in the way" as they type (debounced)
@@ -619,8 +670,8 @@
           const res = tryRun(() => kind === 'prove-bet' ? Core.submitBetProof(state, id, proof, t) : Core.submitRedemptionProof(state, id, proof, t));
           if (!res) return;
           ui.sheet = null; Camera.stop();
-          if (kind === 'prove-bet') toast(`Proved it. ${fmtCredits(target.stake)} credits back in your wallet.`);
-          else if (res.fraction >= 1) toast(`Earned back ${fmtCredits(res.unlocked)} credits. Entry closed.`);
+          if (kind === 'prove-bet') { toast(`Proved it. ${fmtCredits(target.stake)} credits back in your wallet.`); celebrate(); }
+          else if (res.fraction >= 1) { toast(`Earned back ${fmtCredits(res.unlocked)} credits. Entry closed.`); celebrate(); }
           else if (res.fraction > 0) toast(`Partial: ${fmtCredits(res.unlocked)} credits unlocked. One chance used.`);
           else toast('Logged as a miss. One chance used. What got in the way?');
           commit();
@@ -640,6 +691,19 @@
   });
 
   // ---------- boot ----------
-  Core.tick(state, now()); Storage.save(state);
-  setTab(location.hash.slice(1) || 'today');
+  (function boot() {
+    const t = now();
+    const lastSeen = state.settings.lastSeenAt || 0;
+    Core.tick(state, t);
+    if (lastSeen) {
+      for (const e of state.vault) {
+        const bet = Core.betById(state, e.betId);
+        if (e.lockedAt > lastSeen && e.status === 'locked') ui.away.push({ type: 'locked', title: bet.title, amount: e.amount, chances: e.chancesLeft });
+        if (e.status === 'decayed' && e.decayedAt > lastSeen) ui.away.push({ type: 'decayed', title: bet.title, amount: e.amount, destination: e.destination });
+      }
+    }
+    state.settings.lastSeenAt = t;
+    Storage.save(state);
+    setTab(location.hash.slice(1) || 'today');
+  })();
 })();

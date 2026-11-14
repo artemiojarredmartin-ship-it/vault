@@ -242,3 +242,39 @@ test('a long random sequence never breaks the money invariant', () => {
   Core.tick(s, now + 40 * DAY);
   ok(s);
 });
+
+test('grace: a token every 3 consecutive wins, capped at 3; a loss resets the streak', () => {
+  const s = fresh();
+  let now = T0;
+  const win = () => { const b = bet(s, { stake: 5 }, now); Core.submitBetProof(s, b.id, { kind: 'photo' }, now + HOUR); now += DAY; };
+  win(); win(); assert.equal(s.grace.tokens, 0);
+  win(); assert.equal(s.grace.tokens, 1);
+  assert.match(s.ledger.at(-1).note, /grace token/);
+  win(); win(); assert.equal(s.grace.tokens, 1);
+  win(); assert.equal(s.grace.tokens, 2);
+  // a loss
+  bet(s, { stake: 5 }, now); Core.tick(s, now + 25 * HOUR); now += 2 * DAY;
+  assert.equal(Core.winStreak(s), 0);
+  win(); win(); win(); assert.equal(s.grace.tokens, 3);
+  win(); win(); win(); assert.equal(s.grace.tokens, 3, 'capped');
+  ok(s);
+});
+
+test('grace: extending a bet pushes the deadline 24h, once, and costs a token', () => {
+  const s = fresh();
+  const b = bet(s, { stake: 5 });
+  assert.throws(() => Core.extendBet(s, b.id, T0 + HOUR), /No grace tokens/);
+  s.grace.tokens = 1;
+  const dl = b.deadline;
+  Core.extendBet(s, b.id, T0 + HOUR);
+  assert.equal(b.deadline, dl + 24 * HOUR);
+  assert.equal(s.grace.tokens, 0);
+  s.grace.tokens = 1;
+  assert.throws(() => Core.extendBet(s, b.id, T0 + 2 * HOUR), /already extended/);
+  // the extension actually prevents a lock
+  assert.deepEqual(Core.tick(s, dl + HOUR), []);
+  assert.equal(b.status, 'active');
+  Core.tick(s, dl + 25 * HOUR);
+  assert.equal(b.status, 'locked');
+  ok(s);
+});

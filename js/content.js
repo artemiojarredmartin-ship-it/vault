@@ -103,5 +103,17 @@
     }
   ];
 
-  global.Content = { DESTINATIONS, PROMPTS, LEARN };
+  // Bet templates: prefill the form so placing a bet takes under 30 seconds.
+  const TEMPLATES = [
+    { label: 'Study', title: 'Study 30 minutes', measure: { kind: 'duration', amount: 30, unit: 'minutes' }, stake: 10, proofTier: 1, deadline: 'tonight' },
+    { label: 'Run', title: 'Run 3 km', measure: { kind: 'quantity', amount: 3, unit: 'km' }, stake: 15, proofTier: 1, deadline: '24h' },
+    { label: 'Gym', title: 'Go to the gym', measure: { kind: 'binary' }, stake: 15, proofTier: 1, deadline: '24h' },
+    { label: 'Read', title: 'Read 20 pages', measure: { kind: 'quantity', amount: 20, unit: 'pages' }, stake: 10, proofTier: 1, deadline: 'tonight' },
+    { label: 'Write', title: 'Write 300 words', measure: { kind: 'quantity', amount: 300, unit: 'words' }, stake: 10, proofTier: 1, deadline: 'tonight' },
+    { label: 'Sleep', title: 'In bed by 11pm', measure: { kind: 'binary' }, stake: 5, proofTier: 0, deadline: 'tonight' },
+    { label: 'Screen time', title: 'No phone after 10pm', measure: { kind: 'binary' }, stake: 5, proofTier: 0, deadline: 'tonight' },
+    { label: 'Chores', title: 'Clean my room', measure: { kind: 'binary' }, stake: 5, proofTier: 1, deadline: '24h' }
+  ];
+
+  global.Content = { DESTINATIONS, PROMPTS, LEARN, TEMPLATES };
 })(window);

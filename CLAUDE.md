@@ -28,13 +28,14 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 | `js/camera.js` | `getUserMedia` capture, stamps proof code + time, downscales to ≤640px JPEG. |
 | `js/feedback.js` | Gibb supportive-vs-defensive language helper (from the Checkpoint prototype). Not wired into the Vault UI yet; intended for partner messages in Phase 1. |
 | `js/content.js` | Learn content, prompts, decay destinations. |
-| `tests/core.test.js` | 17 tests incl. a 300-step random fuzz on the money invariant. |
+| `tests/core.test.js` | 19 tests incl. a 300-step random fuzz on the money invariant. |
 
 ## Invariants (tests assert these; keep them true)
 - `wallet + atStake + inVault + decayed == granted` at all times (`Core.checkInvariants`).
 - A redemption must be harder on ≥1 dimension (`Core.harderBy`): amount ≥1.5×, window ≤50%, or stricter proof.
 - `chancesLeft` never negative; decayed entries can't be redeemed; full redemption success costs no chance.
 - `Core.tick` is idempotent.
+- Grace: 1 token per 3 consecutive wins, max 3 held; `extendBet` adds 24h once per bet and costs a token.
 
 ## Conventions
 - Rules in `core.js`, never in `app.js`. UI calls Core and shows the thrown message as a toast (`tryRun`).

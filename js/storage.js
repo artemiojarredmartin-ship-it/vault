@@ -25,6 +25,7 @@
     const out = Object.assign(b, data);
     for (const k of ['bets', 'proofs', 'vault', 'redemptions', 'ledger', 'partners']) if (!Array.isArray(out[k])) out[k] = [];
     out.wallet = Object.assign({ credits: 0 }, data.wallet || {});
+    out.grace = Object.assign({ tokens: 0, earned: 0, spent: 0 }, data.grace || {});
     out.settings = Object.assign(Core.blank().settings, { clockOffset: 0 }, data.settings || {});
     return out;
   }
@@ -32,16 +33,32 @@
   function save(state) { localStorage.setItem(KEY, JSON.stringify(state)); }
   function exportJSON(state) { return JSON.stringify(state, null, 2); }
 
+  /** Export including proof photos (async: photos live in IndexedDB). */
+  async function exportJSONWithMedia(state) {
+    const keys = state.proofs.map(p => p.mediaKey).filter(Boolean);
+    const media = {};
+    for (const k of keys) { const url = await getMedia(k); if (url) media[k] = url; }
+    return JSON.stringify(Object.assign({}, state, { media }), null, 2);
+  }
+
   function importJSON(text) {
     let data;
     try { data = JSON.parse(text); } catch (e) { throw new Error('That file is not valid JSON.'); }
     if (!data || typeof data !== 'object' || !Array.isArray(data.bets) || !Array.isArray(data.ledger)) {
       throw new Error('That file does not look like a Vault export.');
     }
+    const media = data.media && typeof data.media === 'object' ? data.media : {};
+    delete data.media;
     const s = normalize(data);
     const problems = Core.checkInvariants(s);
     if (problems.length) throw new Error('Import refused, the money does not balance: ' + problems[0]);
-    return s;
+    return { state: s, media };
+  }
+
+  async function restoreMedia(media) {
+    let n = 0;
+    for (const [k, url] of Object.entries(media || {})) { if (typeof url === 'string' && url.startsWith('data:image/')) { await putMedia(k, url).catch(() => {}); n++; } }
+    return n;
   }
 
   function clear() { localStorage.removeItem(KEY); }
@@ -76,5 +93,5 @@
     return db().then(d => new Promise((res) => { const tx = d.transaction(STORE, 'readwrite'); tx.objectStore(STORE).clear(); tx.oncomplete = res; tx.onerror = res; })).catch(() => {});
   }
 
-  global.Storage = { KEY, load, save, exportJSON, importJSON, clear, putMedia, getMedia, clearMedia };
+  global.Storage = { KEY, load, save, exportJSON, exportJSONWithMedia, importJSON, restoreMedia, clear, putMedia, getMedia, clearMedia };
 })(window);

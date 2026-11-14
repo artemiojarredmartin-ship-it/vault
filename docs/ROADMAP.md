@@ -14,18 +14,19 @@
 - [x] Stats: win rate, streak, saved-by-proving, recovery rate
 - [x] Sample data; Settings time machine for testing; JSON export/import (import refuses unbalanced files)
 - [x] Learn tab: loss aversion, commitment devices, the Vault rationale, harder rule, proof tiers, supportive climate, competitors
-- [x] 17 node tests incl. 300-step random fuzz; mobile layout; dark mode; GitHub Pages ready
+- [x] 19 node tests incl. 300-step random fuzz; mobile layout; dark mode; GitHub Pages ready
 
 ## Phase 0.5 — polish (good next tasks, each ~1 session)
 
-- [ ] Celebration moment on a win (confetti, animated wallet count-up) and a calm "It's in the Vault" moment on a lock
-- [ ] Weekly review screen: bets, wins, locks, lessons, recovery
-- [ ] Grace tokens: earn 1 per 7-day clean streak, spend to extend a deadline 24h once per bet
-- [ ] Goal templates (study, fitness, writing, sleep, screen time) that prefill measure + sensible stake
-- [ ] Include proof photos in export/import (base64) or an explicit "export photos" zip
+- [x] Celebration confetti on a win / full redemption; "While you were away" card on Today for locks and decays since last visit
+- [ ] Weekly review screen: bets, wins, locks, lessons, recovery  ← good first task
+- [x] Grace tokens: earn 1 per 3 consecutive wins (max 3), spend to extend a bet's deadline 24h once per bet
+- [x] Bet templates (study, run, gym, read, write, sleep, screen time, chores) that prefill the form
+- [x] Proof photos included in JSON export/import (base64 data URLs)
 - [ ] Inline SVG chart of wallet / vault balance over time (no library)
 - [ ] Browser notifications (opt-in) at T-24h and T-1h
-- [ ] Accessibility pass: focus trap in sheets, ARIA for countdowns, reduced-motion
+- [x] Escape closes sheets; focus moves into sheets; confetti respects reduced-motion
+- [ ] Accessibility pass: full focus trap in sheets, ARIA live for countdowns
 - [ ] Perceptual hash of proof photos to flag reused shots
 - [ ] Remove the "camera unavailable → self-attest" fallback once there's a desktop path (e.g., QR hand-off to phone)
 

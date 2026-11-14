@@ -19,7 +19,10 @@
     CHANCES: 3,
     HARDER_MULTIPLIER: 1.5,
     HARDER_WINDOW_FRACTION: 0.5,
-    MIN_WINDOW_MS: 5 * MIN
+    MIN_WINDOW_MS: 5 * MIN,
+    GRACE_EVERY_WINS: 3,
+    GRACE_MAX: 3,
+    GRACE_EXTENSION_MS: 24 * HOUR
   };
 
   const TIERS = {
@@ -56,6 +59,7 @@
       redemptions: [],
       ledger: [{ id: uid('l'), at: 0, delta: RULES.STARTING_CREDITS, balanceAfter: RULES.STARTING_CREDITS, reason: 'grant', refId: null, note: 'Starting credits' }],
       partners: [],
+      grace: { tokens: 0, earned: 0, spent: 0 },
       settings: { name: '', realMoneyEnabled: false }
     };
   }
@@ -155,6 +159,38 @@
     bet.status = 'won';
     bet.resolvedAt = now;
     ledger(state, now, bet.stake, 'won', bet.id, `Proved "${bet.title}"${proof.cameraUnavailable ? ' (camera unavailable, self-attested)' : ''}`);
+    maybeAwardGrace(state, now);
+    return bet;
+  }
+
+  // ---------- grace tokens ----------
+  function winStreak(state) {
+    const resolved = state.bets.filter(b => ['won', 'locked'].includes(b.status)).sort((a, b) => b.resolvedAt - a.resolvedAt);
+    let n = 0; for (const b of resolved) { if (b.status === 'won') n++; else break; }
+    return n;
+  }
+  function maybeAwardGrace(state, now) {
+    if (!state.grace) state.grace = { tokens: 0, earned: 0, spent: 0 };
+    const streak = winStreak(state);
+    if (streak > 0 && streak % RULES.GRACE_EVERY_WINS === 0 && state.grace.tokens < RULES.GRACE_MAX) {
+      state.grace.tokens += 1; state.grace.earned += 1;
+      state.ledger.push({ id: uid('l'), at: now, delta: 0, balanceAfter: state.wallet.credits, reason: 'grace', refId: null, note: `${streak} wins in a row: earned a grace token (${state.grace.tokens}/${RULES.GRACE_MAX})` });
+      return true;
+    }
+    return false;
+  }
+  /** Spend a grace token to push an active bet's deadline back 24h. Once per bet. */
+  function extendBet(state, betId, now) {
+    if (!state.grace) state.grace = { tokens: 0, earned: 0, spent: 0 };
+    const bet = betById(state, betId);
+    assert(bet && bet.status === 'active', 'Only active bets can be extended.');
+    assert(now <= bet.deadline, 'The deadline has already passed.');
+    assert(!bet.extended, 'This bet was already extended once.');
+    assert(state.grace.tokens > 0, 'No grace tokens. Earn one with 3 wins in a row.');
+    bet.deadline += RULES.GRACE_EXTENSION_MS;
+    bet.extended = true;
+    state.grace.tokens -= 1; state.grace.spent += 1;
+    state.ledger.push({ id: uid('l'), at: now, delta: 0, balanceAfter: state.wallet.credits, reason: 'grace', refId: bet.id, note: `Spent a grace token: "${bet.title}" extended 24h` });
     return bet;
   }
 
@@ -309,6 +345,7 @@
     betById, entryById, redemptionById, entryForBet, activeRedemptionFor,
     balances, checkInvariants, stats,
     placeBet, cancelBet, submitBetProof, harderBy, createRedemption, submitRedemptionProof,
-    tick, setWhatGotInTheWay, grant, normalizeMeasure
+    tick, setWhatGotInTheWay, grant, normalizeMeasure,
+    winStreak, maybeAwardGrace, extendBet
   };
 });

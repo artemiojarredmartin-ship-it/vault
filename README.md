@@ -21,7 +21,7 @@ fair before a single real dollar moves.
 4. **Earn it back** — build a challenge that's harder by at least one of: amount ×1.5, half the time window, stricter proof. Full success unlocks everything; partial success unlocks a share and uses one of three chances.
 5. **Decay** — after 30 days, anything still locked goes to the destination you chose.
 
-Every credit movement is in the Ledger, which shows a live "Balanced" check.
+Win three in a row and you earn a **grace token**: spend it to push one deadline back 24 hours. Every credit movement is in the Ledger, which shows a live "Balanced" check.
 
 ## Run it
 
@@ -60,7 +60,7 @@ js/storage.js              localStorage + IndexedDB for proof photos
 js/camera.js               live photo capture with proof-code stamp
 js/content.js              Learn tab, prompts, destinations
 js/feedback.js             supportive-language helper for partner messages (Phase 1)
-tests/core.test.js         17 tests incl. a random fuzz on the money invariant
+tests/core.test.js         19 tests incl. a random fuzz on the money invariant
 docs/VAULT_DESIGN.md       state machine, rules, modules
 docs/BET_ON_YOURSELF_PROMPT.md  original brief + competitor research
 docs/ROADMAP.md            what's done, what's next
