@@ -13,7 +13,7 @@
 - [x] "What got in the way?" note on every vault entry
 - [x] Stats: win rate, streak, saved-by-proving, recovery rate
 - [x] Sample data; Settings time machine for testing; JSON export/import (import refuses unbalanced files)
-- [x] Learn tab: loss aversion, commitment devices, the Vault rationale, harder rule, proof tiers, supportive climate, competitors
+- [x] Learn tab: how it works, the harder rule, proof levels, grace tokens, the promise
 - [x] 19 node tests incl. 300-step random fuzz; mobile layout; dark mode; GitHub Pages ready
 
 ## Phase 0.5 — polish (good next tasks, each ~1 session)

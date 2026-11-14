@@ -25,80 +25,53 @@
 
   const LEARN = [
     {
-      id: 'why',
-      title: 'Why bet on yourself?',
+      id: 'how',
+      title: 'How Vault works',
       body: [
-        'People feel a loss about twice as strongly as an equal gain. That asymmetry, called loss aversion, is why a $10 stake works harder than a $10 reward (Kahneman & Tversky, 1979).',
-        'A commitment device is a choice you make now that limits your future self: Ulysses tying himself to the mast. Students who chose binding deadlines for themselves did better than students with no deadlines, even though the deadlines cost them flexibility (Ariely & Wertenbroch, 2002).',
-        'Vault turns both ideas into a loop you can run every day: pick a goal, stake credits, set an honest deadline, prove it, keep the credits.'
+        '1. Place a bet. Pick a goal, put some credits on it, and set a deadline you actually believe.',
+        '2. Prove it before the deadline. Your credits come straight back to your wallet.',
+        '3. Miss it and the credits are locked in your Vault. Not gone. Locked.',
+        '4. Earn them back. You get three chances to complete a harder version of the goal. Pull it off and the credits are yours again.',
+        '5. If you still have credits locked after 30 days, they go to the destination you picked when you placed the bet: a charity, a friend, a pool. Never to the app.'
       ]
     },
     {
-      id: 'vault',
-      title: 'Why a Vault instead of a penalty?',
-      body: [
-        'Most stake apps make you pay the app when you fail. That creates a quiet conflict of interest: the stricter the judging, the more the app earns. Users feel it, and reviews of those apps are full of billing disputes.',
-        'Vault never keeps your money. A missed stake is locked, not lost. You get three chances to earn it back by doing something measurably harder. If you don\'t, after 30 days it goes to a destination you chose when you placed the bet: a charity, a friend, a pool. Never us.',
-        'The failure screen is designed to re-engage you, not shame you. It asks what got in the way, then hands you the redemption button.'
-      ],
-      quote: 'The app should want you to win. Our revenue is a subscription and a visible fee, never your forfeits.'
-    },
-    {
       id: 'harder',
-      title: 'The "harder" rule',
+      title: 'What counts as "harder"',
       body: [
-        'A redemption challenge must beat the original bet on at least one dimension, and the app computes it so you can\'t talk yourself into an easy one:',
-        'Quantity or duration: at least 1.5× the original amount. A yes/no bet counts as 1, so "do it twice" qualifies.',
-        'Deadline: the time window is half the original or less.',
-        'Proof: a stricter proof tier than the original.',
-        'Partial success unlocks a proportional share and uses up one chance. Full success unlocks everything and costs no chances.'
+        'The app checks this for you so you can\'t sneak in an easy one. A redemption challenge has to beat the original bet on at least one of these:',
+        'More: at least 1.5× the amount. If the original was a yes/no goal, doing it twice counts.',
+        'Faster: half the time window or less.',
+        'Stricter: a higher proof level than the original.',
+        'Finish all of it and every credit unlocks with no chance used. Finish part of it and you unlock that share, and one chance is used.'
       ]
     },
     {
       id: 'proof',
-      title: 'Proof tiers',
+      title: 'Proof levels',
       body: [
-        'Honor (max 10 credits): your word. Fine for tiny bets.',
-        'Live photo (max 50): taken inside the app, no gallery uploads, with your one-time proof code stamped on the frame.',
-        'Partner (max 200): a named human approves or rejects within a window. Coming in Phase 1.',
-        'Integration (max 1000): automatic data from Strava, Screen Time, GitHub and friends. Coming in Phase 1.',
-        'AI will only ever pre-screen proofs for obvious mismatches. A human is always the judge of record.'
+        'Bigger stakes need stronger proof. The level you pick sets the maximum you can bet.',
+        'Honor (up to 10 credits). You tick a box saying you did it. For small, everyday goals.',
+        'Live photo (up to 50 credits). You take a photo inside the app, right then. No uploads from your camera roll. Your one-time proof code is stamped on the shot, and it has to be in the frame.',
+        'Partner (up to 200 credits). A person you name sees your proof and approves or rejects it. Coming in Phase 1.',
+        'Integration (up to 1000 credits). The proof comes automatically from another app, like a run from Strava or a screen-time report. Coming in Phase 1.',
+        'AI will only ever flag obvious mismatches. A human always makes the final call.'
       ]
     },
     {
-      id: 'climate',
-      title: 'Supportive climate, not shame',
+      id: 'grace',
+      title: 'Grace tokens',
       body: [
-        'Accountability is a relationship, and every relationship has a communication climate. Jack Gibb (1961) described six behaviors that make people defensive and six that keep them open. Vault\'s partner messages run through a composer that flags the defensive ones.',
-        'Microsoft learned this the expensive way. Its stack-ranking system forced managers to rate someone on every team as a failure, so coworkers competed instead of cooperating. Dropping it in 2013 and shifting to a "learn-it-all" culture under Satya Nadella is the clearest case that systems shape climate (Eichenwald, 2012; Ibarra & Rattan, 2018).',
-        'The same applies to you and yourself. A missed bet is information. Write down what got in the way, pick the harder challenge, go again.'
-      ],
-      table: [
-        ['Evaluation', 'Description', '"You always quit." → "The last two bets were missed."'],
-        ['Control', 'Problem orientation', '"You need to try harder." → "What would make it easier?"'],
-        ['Strategy', 'Spontaneity', '"Don\'t you think…" → "Here\'s what I\'d try."'],
-        ['Neutrality', 'Empathy', '"Not my problem." → "Rough week?"'],
-        ['Superiority', 'Equality', '"Obviously…" → "From where I sit…"'],
-        ['Certainty', 'Provisionalism', '"The only way is…" → "One option is… I could be wrong."']
+        'Win three bets in a row and you earn a grace token. You can hold up to three.',
+        'Spend one to push a live bet\'s deadline back 24 hours. Each bet can only be extended once.'
       ]
     },
     {
-      id: 'others',
-      title: 'What else is out there',
+      id: 'promise',
+      title: 'The promise',
       body: [
-        'stickK (2008) pioneered commitment contracts with a referee and charity or anti-charity stakes. Beeminder graphs numeric goals and escalates the pledge each time you derail. Forfeit made it slick with AI-checked photos and a hard mode. A 2025–26 wave (Habi, Lockin, Stakely, Ante, Oath, Gym Bet) added friend pots and gym-specific earn-back.',
-        'What none of them do: refuse the forfeit money, give a computed path to earn it back, and gate stake size by proof strength. That\'s Vault.'
-      ]
-    },
-    {
-      id: 'references',
-      title: 'References',
-      body: [
-        'Ariely, D., & Wertenbroch, K. (2002). Procrastination, deadlines, and performance. Psychological Science, 13(3), 219–224.',
-        'Eichenwald, K. (2012, August). Microsoft\'s lost decade. Vanity Fair.',
-        'Gibb, J. R. (1961). Defensive communication. Journal of Communication, 11(3), 141–148.',
-        'Ibarra, H., & Rattan, A. (2018). Microsoft: Instilling a growth mindset. London Business School.',
-        'Kahneman, D., & Tversky, A. (1979). Prospect theory. Econometrica, 47(2), 263–291.'
+        'Vault never keeps your money. Most apps like this profit when you fail, which gives them a reason to judge you harshly. Vault earns from a subscription and a visible fee, so the app only wins when you do.',
+        'Right now everything is play credits stored in your browser. Real money comes later, as an opt-in, after a lawyer has looked at it.'
       ]
     }
   ];
