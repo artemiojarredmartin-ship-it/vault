@@ -12,7 +12,7 @@ keep forfeited money.** Phase 0 (current) is play credits only, no backend.
 The original build prompt with competitor research is `docs/BET_ON_YOURSELF_PROMPT.md`.
 
 ## Live site
-https://jarvisagimuspicard-hub.github.io/vault/ (GitHub Pages from `main`; pushing to main deploys). `#prove` is the one-tap proof page used by the phone lock-screen shortcut.
+https://artemiojarredmartin-ship-it.github.io/vault/ (GitHub Pages from `main`; pushing to main deploys). `#prove` is the one-tap proof page used by the phone lock-screen shortcut.
 
 ## Commands
 ```bash

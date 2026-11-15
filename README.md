@@ -25,7 +25,7 @@ Win three in a row and you earn a **grace token**: spend it to push one deadline
 
 ## Try it
 
-**Live:** https://jarvisagimuspicard-hub.github.io/vault/ (installable on your phone; Settings → "Put Vault on your phone" sets up a one-tap lock-screen button).
+**Live:** https://artemiojarredmartin-ship-it.github.io/vault/ (installable on your phone; Settings → "Put Vault on your phone" sets up a one-tap lock-screen button).
 
 ## Run it
 
