@@ -278,3 +278,37 @@ test('grace: extending a bet pushes the deadline 24h, once, and costs a token', 
   assert.equal(b.status, 'locked');
   ok(s);
 });
+
+test('rank climbs with wins and full comebacks', () => {
+  const s = fresh();
+  let r = Core.rank(s);
+  assert.equal(r.name, 'Rookie'); assert.equal(r.points, 0); assert.equal(r.toNext, 3); assert.equal(r.progress, 0);
+  for (let i = 0; i < 3; i++) { const b = bet(s, { stake: 1, proofTier: 0 }); Core.submitBetProof(s, b.id, { kind: 'self', done: 1 }, T0 + HOUR); }
+  r = Core.rank(s);
+  assert.equal(r.name, 'Regular'); assert.equal(r.level, 2); assert.equal(r.next, 'Contender');
+  assert.ok(r.progress >= 0 && r.progress < 1);
+  ok(s);
+});
+
+test('challenge window: photo must be shot within 2 minutes of drawing', () => {
+  const s = fresh();
+  const b = bet(s, {}, T0);
+  assert.throws(() => Core.drawChallenge(s, 'bet', b.id, '', T0), /instructions/);
+  const ch = Core.drawChallenge(s, 'bet', b.id, '10 jumping jacks outside', T0 + MIN);
+  assert.equal(ch.expiresAt, T0 + MIN + RULES.CHALLENGE_WINDOW_MS);
+  assert.throws(() => Core.submitBetProof(s, b.id, { kind: 'photo', shotAt: T0 + 4 * MIN }, T0 + 5 * MIN), /challenge window/);
+  assert.throws(() => Core.submitBetProof(s, b.id, { kind: 'photo' }, T0 + 2 * MIN), /challenge window/);
+  // redraw restarts the window and counts draws
+  const ch2 = Core.drawChallenge(s, 'bet', b.id, 'Touch grass', T0 + 10 * MIN);
+  assert.equal(ch2.draws, 2);
+  Core.submitBetProof(s, b.id, { kind: 'photo', shotAt: T0 + 11 * MIN }, T0 + 12 * MIN);
+  assert.equal(s.bets[0].status, 'won');
+  assert.equal(s.proofs[0].challenge, 'Touch grass');
+  ok(s);
+});
+
+test('honor bets cannot draw challenges', () => {
+  const s = fresh();
+  const b = bet(s, { proofTier: 0, stake: 5 }, T0);
+  assert.throws(() => Core.drawChallenge(s, 'bet', b.id, 'x', T0), /Honor/);
+});

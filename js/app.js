@@ -19,7 +19,7 @@
 
   const app = document.getElementById('app');
   const sheetRoot = document.getElementById('sheet-root');
-  const TABS = ['today', 'bets', 'vault', 'ledger', 'learn', 'settings'];
+  const TABS = ['today', 'prove', 'bets', 'vault', 'ledger', 'learn', 'settings'];
 
   // ---------- time (supports the testing "time machine") ----------
   function now() { return Date.now() + (state.settings.clockOffset || 0); }
@@ -30,10 +30,7 @@
     const events = Core.tick(state, now());
     if (events.length) {
       Storage.save(state);
-      for (const ev of events) {
-        if (ev.type === 'locked') toast(`"${ev.bet.title}" missed. ${ev.bet.stake} credits are in the Vault, not gone.`);
-        if (ev.type === 'decayed') toast(`${ev.entry.amount} credits went to ${ev.entry.destination}.`);
-      }
+      handleEvents(events);
       render();
     }
     return events;
@@ -86,10 +83,107 @@
   function todaysPrompt() { return Content.PROMPTS[Math.floor(now() / DAY) % Content.PROMPTS.length]; }
 
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, kind = '') {
     const el = document.getElementById('toast');
+    el.hidden = true; void el.offsetWidth; // restart the slide-in
+    el.className = 'toast' + (kind ? ' ' + kind : '');
     el.textContent = msg; el.hidden = false;
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 3400);
+  }
+
+  const reducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+
+  // ---------- chips ----------
+  function chipIco(cls = 'chip-ico') {
+    return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#c99a3a"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="#fff3cf" stroke-width="2.8" stroke-dasharray="3.77 3.77"/><circle cx="12" cy="12" r="6.6" fill="#e3bb60" stroke="#8a6416" stroke-width=".8"/><circle cx="12" cy="12" r="3.4" fill="none" stroke="#fff3cf" stroke-width="1.1"/></svg>`;
+  }
+  function amt(n, small) { return `<span class="amt${small ? ' small' : ''}">${chipIco()}${fmtCredits(n)}</span>`; }
+  function chipstack(n, color) {
+    if (!(n > 0)) return '<div class="chipstack empty" aria-hidden="true"></div>';
+    const count = Math.min(6, Math.max(1, Math.ceil(Math.log2(n + 1))));
+    return `<div class="chipstack" aria-hidden="true" style="--c:${color}">${'<i></i>'.repeat(count)}</div>`;
+  }
+
+  // ---------- animated numbers ----------
+  const shownCounts = {};
+  function countUp(el, from, to, dur) {
+    if (reducedMotion() || from === to) { el.textContent = fmtCredits(to); return; }
+    const t0 = performance.now();
+    el.textContent = fmtCredits(from);
+    (function step(t) {
+      const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = p < 1 ? fmtCredits(Math.round(from + (to - from) * e)) : fmtCredits(to);
+      if (p < 1 && el.isConnected) requestAnimationFrame(step);
+    })(t0);
+  }
+  function animateCounts() {
+    const next = {};
+    document.querySelectorAll('[data-count-key]').forEach(el => {
+      const key = el.dataset.countKey, to = Number(el.dataset.count);
+      const from = key in shownCounts ? shownCounts[key] : to;
+      if (from !== to) { el.classList.add(to > from ? 'up' : 'down'); countUp(el, from, to, 800); }
+      next[key] = to;
+    });
+    Object.assign(shownCounts, next);
+  }
+
+  // ---------- sound (quiet, synthesized, only after a tap) ----------
+  const Sfx = (() => {
+    let ctx = null;
+    function ac() {
+      if (state.settings.sound === false) return null;
+      const C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return null;
+      try { if (!ctx) ctx = new C(); if (ctx.state === 'suspended') ctx.resume(); } catch (e) { return null; }
+      return ctx;
+    }
+    function blip(c, freq, at, dur, type, vol) {
+      const o = c.createOscillator(), g = c.createGain(), t = c.currentTime + at;
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+    }
+    function clack(c, at, vol) {
+      const len = Math.floor(c.sampleRate * 0.03), buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 4);
+      const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+      src.buffer = buf; f.type = 'bandpass'; f.frequency.value = 3400; f.Q.value = 1.3; g.gain.value = vol;
+      src.connect(f); f.connect(g); g.connect(c.destination); src.start(c.currentTime + at);
+    }
+    return {
+      chip() { const c = ac(); if (c) { clack(c, 0, .45); clack(c, .04, .3); } },
+      stake() { const c = ac(); if (c) [0, .06, .12, .17].forEach((t, i) => clack(c, t, .45 - i * .08)); },
+      win() { const c = ac(); if (!c) return; [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => blip(c, f, i * .09, .55, 'triangle', .06)); [0, .07, .14, .21, .28, .35].forEach(t => clack(c, .3 + t, .28)); },
+      lock() { const c = ac(); if (!c) return; clack(c, 0, .5); blip(c, 170, 0, .2, 'sine', .12); blip(c, 104, .14, .45, 'sine', .14); clack(c, .14, .4); },
+      rankUp() { const c = ac(); if (!c) return; [659.25, 783.99, 987.77, 1318.5].forEach((f, i) => blip(c, f, i * .07, .6, 'sine', .05)); }
+    };
+  })();
+
+  // ---------- big moments ----------
+  const DIAL = `<svg class="vault-dial" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="28" fill="none" stroke="#e0b85c" stroke-width="4"/><circle cx="32" cy="32" r="8" fill="#e0b85c"/><path d="M32 6v12M32 46v12M6 32h12M46 32h12" stroke="#e0b85c" stroke-width="4" stroke-linecap="round"/></svg>`;
+  function payout({ kicker, amount, sub, kind = 'win' }) {
+    document.querySelectorAll('.payout').forEach(p => p.remove());
+    const el = document.createElement('div');
+    el.className = 'payout ' + kind; el.setAttribute('role', 'status');
+    el.innerHTML = `<div class="payout-card">${kind === 'lock' ? DIAL : ''}<div class="payout-kicker">${esc(kicker)}</div>
+      <div class="payout-amt">${kind === 'win' ? '+' : ''}${chipIco()}<span>${fmtCredits(amount)}</span></div>
+      <div class="payout-sub">${esc(sub)}</div></div>`;
+    document.body.appendChild(el);
+    countUp(el.querySelector('.payout-amt span'), 0, amount, 900);
+    const close = () => { if (!el.isConnected || el.classList.contains('out')) return; el.classList.add('out'); setTimeout(() => el.remove(), 350); };
+    el.addEventListener('click', close);
+    setTimeout(close, kind === 'lock' ? 2600 : 2200);
+  }
+
+  function handleEvents(events) {
+    let shown = false;
+    for (const ev of events) {
+      if (ev.type === 'locked') {
+        if (!shown) { payout({ kind: 'lock', kicker: 'Locked, not lost', amount: ev.bet.stake, sub: `"${ev.bet.title}" missed. ${RULES.CHANCES} chances to earn it back.` }); Sfx.lock(); shown = true; }
+        else toast(`"${ev.bet.title}" missed. ${ev.bet.stake} credits are in the Vault, not gone.`, 'lock');
+      }
+      if (ev.type === 'decayed') toast(`${fmtCredits(ev.entry.amount)} credits went to ${ev.entry.destination}.`, 'lock');
+    }
   }
 
   // ---------- routing ----------
@@ -97,26 +191,54 @@
     ui.tab = TABS.includes(tab) ? tab : 'today';
     if (location.hash !== '#' + ui.tab) history.replaceState(null, '', '#' + ui.tab);
     document.querySelectorAll('.tabs a').forEach(a => a.classList.toggle('active', a.dataset.nav === ui.tab));
+    if (ui.tab === 'prove' && !ui.sheet) {
+      Core.tick(state, now());
+      const due = dueItems();
+      if (due.length === 1) ui.sheet = { kind: due[0].kind, id: due[0].item.id };
+    }
     render(); window.scrollTo({ top: 0 });
+  }
+
+  // Everything that can be proved right now, soonest deadline first.
+  function dueItems() {
+    const bets = state.bets.filter(b => b.status === 'active').map(item => ({ kind: 'prove-bet', item }));
+    const reds = state.redemptions.filter(r => r.status === 'active').map(item => ({ kind: 'prove-redemption', item }));
+    return bets.concat(reds).sort((a, b) => a.item.deadline - b.item.deadline);
   }
   window.addEventListener('hashchange', () => setTab(location.hash.slice(1)));
 
   // ---------- render ----------
   function render() {
     Core.tick(state, now());
-    const views = { today, bets, vault, ledger, learn, settings };
+    const views = { today, prove, bets, vault, ledger, learn, settings };
     app.innerHTML = views[ui.tab]();
     sheetRoot.innerHTML = ui.sheet ? sheet() : '';
     document.body.style.overflow = ui.sheet ? 'hidden' : '';
+    const w = state.wallet.credits;
+    document.getElementById('wallet-pill').innerHTML = `${chipIco()}<span class="num" data-count="${w}" data-count-key="hdr">${fmtCredits(w)}</span>`;
+    const r = Core.rank(state);
+    if (ui.lastLevel && r.level > ui.lastLevel) { toast(`Rank up: ${r.name}`, 'win'); Sfx.rankUp(); }
+    ui.lastLevel = r.level;
     afterRender();
   }
 
-  function balancesBlock() {
+  function balancesBlock(extra = '') {
     const b = Core.balances(state);
-    return `<div class="balances">
-      <div class="card"><div class="num">${fmtCredits(b.wallet)}</div><div class="label">wallet</div></div>
-      <div class="card stake"><div class="num">${fmtCredits(b.atStake)}</div><div class="label">at stake</div></div>
-      <div class="card vault"><div class="num">${fmtCredits(b.inVault)}</div><div class="label">in the Vault</div></div>
+    const slot = (cls, key, v, label, color) => `<div class="slot ${cls}">${chipstack(v, color)}
+      <div class="num" data-count="${v}" data-count-key="${key}">${fmtCredits(v)}</div><div class="label">${label}</div></div>`;
+    return `<div class="felt"><div class="balances">
+      ${slot('wallet', 'wallet', b.wallet, 'Wallet', '#c99a3a')}
+      ${slot('stake', 'stake', b.atStake, 'On the table', '#2f5fc9')}
+      ${slot('vault', 'vault', b.inVault, 'In the Vault', '#c2413b')}
+    </div>${extra}</div>`;
+  }
+
+  function rankBar() {
+    const r = Core.rank(state);
+    return `<div class="rankbar">
+      <div class="top"><span><span class="rank-lvl">Lv ${r.level}</span><span class="rank-name">${esc(r.name)}</span></span>
+        <span class="label">${r.next ? `${r.toNext} win${r.toNext === 1 ? '' : 's'} to ${esc(r.next)}` : 'Top rank'}</span></div>
+      <div class="xp" role="progressbar" aria-label="Progress to next rank" aria-valuenow="${Math.round(r.progress * 100)}" aria-valuemin="0" aria-valuemax="100"><div data-xp="${Math.round(r.progress * 100)}"></div></div>
     </div>`;
   }
 
@@ -125,27 +247,31 @@
     const canCancel = b.status === 'active' && t - b.createdAt <= RULES.COOLING_OFF_MS;
     const proof = b.proofIds.length ? state.proofs.find(p => p.id === b.proofIds[b.proofIds.length - 1]) : null;
     const entry = Core.entryForBet(state, b.id);
-    return `<div class="card bet-card" data-bet="${b.id}">
-      <div class="top">
-        <div><div class="title">${esc(b.title)}</div>${b.why ? `<div class="small muted">${esc(b.why)}</div>` : ''}</div>
-        <div class="amt">${fmtCredits(b.stake)}<span class="small muted"> cr</span></div>
-      </div>
-      <div class="meta">
-        <span class="pill ${b.status === 'won' ? 'done' : b.status === 'locked' ? 'partial' : b.status === 'cancelled' ? '' : 'accent'}">${b.status}</span>
-        ${tierPill(b.proofTier)}
-        <span>${esc(measureText(b.measure))}</span>
-        ${b.status === 'active' ? `<span>· due ${esc(fmtWhen(b.deadline))} · ${countdown(b.deadline)}</span>` : `<span>· ${esc(fmtWhen(b.resolvedAt || b.deadline))}</span>`}
-      </div>
-      ${b.status === 'active' && b.proofTier >= 1 ? `<div class="small muted">Proof code <span class="code">${b.proofCode}</span> must be visible in your photo.</div>` : ''}
-      ${proof && proof.mediaKey ? `<img class="thumb" data-media="${proof.mediaKey}" alt="proof photo">` : ''}
-      ${entry && b.status === 'locked' ? `<div class="small muted">Vault: ${fmtCredits(entry.amount)} locked · ${chances(entry.chancesLeft)} · ${entry.status === 'locked' ? 'decays ' + countdown(entry.decaysAt, 'from now') : entry.status}</div>` : ''}
-      ${b.status === 'active' ? `<div class="row">
+    const stampText = { won: 'Kept', locked: 'Locked', cancelled: 'Void' }[b.status];
+    const foot = b.status === 'active' ? `
         <button class="primary" data-action="open-prove-bet" data-id="${b.id}">Prove it</button>
         ${canCancel ? `<button class="ghost" data-action="cancel-bet" data-id="${b.id}">Cancel (${fmtDur(RULES.COOLING_OFF_MS - (t - b.createdAt))} left)</button>` : ''}
         ${!canCancel && !b.extended && state.grace.tokens > 0 ? `<button class="ghost" data-action="extend-bet" data-id="${b.id}" title="Spend a grace token">+24h grace</button>` : ''}
-        ${b.extended ? '<span class="pill">extended</span>' : ''}
-      </div>` : ''}
-      ${entry && entry.status === 'locked' && opts.redeemButton !== false ? `<div class="row"><button data-action="nav" data-tab="vault">Open in Vault</button></div>` : ''}
+        ${b.extended ? '<span class="pill">extended</span>' : ''}`
+      : entry && entry.status === 'locked' && opts.redeemButton !== false ? `<button data-action="nav" data-tab="vault">Open in Vault</button>` : '';
+    return `<div class="card bet-card ${b.status}" data-bet="${b.id}">
+      <div class="slip-body">
+        <div class="top">
+          <div><div class="title">${esc(b.title)}</div>${b.why ? `<div class="small muted">${esc(b.why)}</div>` : ''}</div>
+          ${amt(b.stake)}
+        </div>
+        <div class="meta">
+          ${b.status === 'active' ? '<span class="pill accent"><span class="status-dot"></span>Live</span>' : ''}
+          ${tierPill(b.proofTier)}
+          <span>${esc(measureText(b.measure))}</span>
+          ${b.status === 'active' ? `<span>· due ${esc(fmtWhen(b.deadline))} · ${countdown(b.deadline)}</span>` : `<span>· ${esc(fmtWhen(b.resolvedAt || b.deadline))}</span>`}
+          ${stampText ? `<span class="stamp ${b.status}">${stampText}</span>` : ''}
+        </div>
+        ${b.status === 'active' && b.proofTier >= 1 ? `<div class="small muted">Proof: a live photo of a random ${esc(Content.challengeCategory(b.title).label.toLowerCase())} challenge, revealed when you tap Prove it.</div>` : ''}
+        ${proof && proof.mediaKey ? `<img class="thumb" data-media="${proof.mediaKey}" alt="proof photo">` : ''}
+        ${entry && b.status === 'locked' ? `<div class="small muted">Vault: ${fmtCredits(entry.amount)} locked · ${chances(entry.chancesLeft)} · ${entry.status === 'locked' ? 'decays ' + countdown(entry.decaysAt, 'from now') : entry.status}</div>` : ''}
+      </div>
+      ${foot ? `<div class="slip-foot">${foot}</div>` : ''}
     </div>`;
   }
 
@@ -158,7 +284,7 @@
       <div class="top row spread">
         <div><div class="title"><strong>${esc(bet.title)}</strong></div>
           <div class="small muted">Locked ${esc(fmtWhen(e.lockedAt))} · originally ${fmtCredits(e.originalAmount)} cr</div></div>
-        <div class="amt">${fmtCredits(e.amount)}<span class="small muted"> cr</span></div>
+        ${amt(e.amount)}
       </div>
       <div class="meta mt">
         <span class="pill ${e.status === 'locked' ? 'partial' : e.status === 'redeemed' ? 'done' : 'missed'}">${e.status}</span>
@@ -166,9 +292,9 @@
         <span>· to ${esc(e.destination)}</span>
       </div>
       ${red ? `<div class="card soft mt">
-        <div class="row spread"><strong>Redemption: ${esc(red.title)}</strong><span class="amt small">${fmtCredits(e.amount)} cr</span></div>
+        <div class="row spread"><strong>Redemption: ${esc(red.title)}</strong>${amt(e.amount, true)}</div>
         <div class="meta"><span>${esc(measureText(red.measure))}</span>${tierPill(red.proofTier)}<span>· harder by ${red.harderBy.join(', ')}</span><span>· ${countdown(red.deadline)}</span></div>
-        ${red.proofTier >= 1 ? `<div class="small muted">Proof code <span class="code">${red.proofCode}</span></div>` : ''}
+
         <div class="row mt"><button class="primary" data-action="open-prove-redemption" data-id="${red.id}">Prove it</button></div>
       </div>` : ''}
       ${canRedeem ? `<div class="row mt"><button class="primary" data-action="open-redeem" data-id="${e.id}">Earn it back</button></div>` : ''}
@@ -193,23 +319,38 @@
     const h = new Date(t).getHours();
     const greet = (h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening') + (name ? ', ' + esc(name) : '');
 
+    const promptCard = `<div class="card soft mt prompt-card"><span class="suit" aria-hidden="true">♦</span><div><div class="eyebrow">Today's prompt</div><p class="mb0">${esc(todaysPrompt())}</p></div></div>`;
+
     if (!state.bets.length) {
       return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">You have ${fmtCredits(state.wallet.credits)} credits. Bet on yourself.</p></div></div>
-        <div class="card">
-          <h2>How Vault works</h2>
-          <p><strong>1. Place a bet.</strong> A goal, a stake, an honest deadline.</p>
-          <p><strong>2. Prove it.</strong> Before the deadline. Keep your credits.</p>
-          <p><strong>3. Miss it?</strong> The stake is locked in your Vault, not lost. You get three chances to earn it back by doing something harder.</p>
-          <p class="muted small">Phase 0 uses play credits. We never keep your money, now or later.</p>
-          <div class="row"><button class="primary big-cta" data-action="nav" data-tab="bets">Place your first bet</button></div>
-          <div class="row mt"><button class="ghost" data-action="sample">Or load sample data to look around</button></div>
+        <div class="felt intro">
+          <div class="eyebrow" style="color:var(--gold-hi)">House rules</div>
+          <h2>The only bet where the house never wins</h2>
+          <div class="deal">
+            <div class="play-card"><span class="idx">1♠</span><strong>Place a bet</strong><p>A goal, a stake, an honest deadline.</p></div>
+            <div class="play-card"><span class="idx red">2♦</span><strong>Prove it</strong><p>Before the deadline. Keep every credit.</p></div>
+            <div class="play-card"><span class="idx">3♣</span><strong>Miss it?</strong><p>Locked in your Vault, not lost. Three chances to win it back with something harder.</p></div>
+          </div>
+          <button class="primary big-cta" data-action="nav" data-tab="bets">Place your first bet</button>
+          <div class="row mt" style="justify-content:center"><button class="ghost" data-action="sample">Or load sample data to look around</button></div>
+          <p class="small muted mb0 mt">Play credits only. We never keep your money, now or later.</p>
         </div>
-        <div class="card soft mt"><h3>Today's prompt</h3><p class="mb0">${esc(todaysPrompt())}</p></div>`;
+        ${promptCard}`;
     }
+
+    const score = (k, v, hot) => `<div class="score${hot ? ' hot' : ''}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+    const tokens = `<span class="tokens" title="Earn one every 3 wins in a row. Spend one to extend a bet 24h.">${Array.from({ length: RULES.GRACE_MAX }, (_, i) => `<i class="${i < state.grace.tokens ? 'on' : ''}"></i>`).join('')}</span>`;
 
     return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">${esc(new Date(t).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}</p></div>
         <button class="primary" data-action="nav" data-tab="bets">New bet</button></div>
-      ${balancesBlock()}
+      ${balancesBlock(rankBar())}
+      <div class="scoreboard">
+        ${score('Win rate', st.winRate == null ? '—' : st.winRate + '%')}
+        ${score(st.streak >= 3 ? 'Hot streak' : 'Streak', st.streak >= 3 ? '×' + st.streak : st.streak, st.streak >= 3)}
+        ${score('Grace', tokens)}
+        ${score('Kept', amt(st.saved, true))}
+        ${st.everLocked ? score('Won back', st.recoveryRate + '%') : ''}
+      </div>
       ${ui.away.length ? `<div class="card mt" style="border-color:var(--partial)">
         <div class="row spread"><h2 class="mb0">While you were away</h2><button class="sm ghost" data-action="dismiss-away">Dismiss</button></div>
         ${ui.away.map(a => a.type === 'locked'
@@ -217,21 +358,29 @@
           : `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" decayed. ${fmtCredits(a.amount)} credits went to ${esc(a.destination)}.</p>`).join('')}
         ${ui.away.some(a => a.type === 'locked') ? `<div class="row mt"><button class="primary" data-action="nav" data-tab="vault">Earn it back</button></div>` : ''}
       </div>` : ''}
-      <div class="row small muted mt" style="gap:1rem">
-        <span>Win rate <strong>${st.winRate == null ? '—' : st.winRate + '%'}</strong></span>
-        <span>Streak <strong>${st.streak}</strong></span>
-        <span title="Earn one every 3 wins in a row. Spend one to extend a bet 24h.">Grace <strong>${state.grace.tokens}</strong>/${RULES.GRACE_MAX}</span>
-        <span>Saved by proving it <strong>${fmtCredits(st.saved)}</strong></span>
-        ${st.everLocked ? `<span>Recovered <strong>${st.recoveryRate}%</strong></span>` : ''}
-      </div>
-
-      <div class="section-title"><h2>Active bets</h2><span class="small muted">${active.length}</span></div>
+      <div class="section-title"><h2>On the table</h2><span class="count-badge">${active.length}</span></div>
       ${active.length ? `<div class="stack">${active.map(b => betCard(b)).join('')}</div>` : `<div class="card soft"><p class="mb0">No active bets. ${locked.length ? 'Your Vault has something to earn back.' : 'Place one while you mean it.'}</p></div>`}
 
-      ${locked.length ? `<div class="section-title"><h2>In the Vault</h2><span class="small muted">${fmtCredits(locked.reduce((n, e) => n + e.amount, 0))} cr</span></div>
+      ${locked.length ? `<div class="section-title"><h2>In the Vault</h2>${amt(locked.reduce((n, e) => n + e.amount, 0), true)}</div>
         <div class="stack">${locked.map(e => entryCard(e, false)).join('')}</div>` : ''}
 
-      <div class="card soft mt"><h3>Today's prompt</h3><p class="mb0">${esc(todaysPrompt())}</p></div>`;
+      ${promptCard}`;
+  }
+
+  function prove() {
+    const due = dueItems();
+    if (!due.length) {
+      return `<div class="page-head"><div><h1>Prove it</h1><p class="muted">Nothing due right now.</p></div></div>
+        <div class="felt intro"><h2>All clear</h2><p class="muted">No active bets or comebacks. Put something on the table.</p>
+          <button class="primary big-cta" data-action="nav" data-tab="bets">Place a bet</button></div>`;
+    }
+    return `<div class="page-head"><div><h1>Prove it</h1><p class="muted">Pick one. Follow the challenge. Done.</p></div></div>
+      <div class="stack">${due.map(({ kind, item }) => `<button class="quick-prove" data-action="${kind === 'prove-bet' ? 'open-prove-bet' : 'open-prove-redemption'}" data-id="${item.id}">
+          <span class="qp-main"><span class="qp-title">${esc(item.title)}</span>
+            <span class="small muted">${kind === 'prove-bet' ? 'Bet' : 'Comeback'} · ${countdown(item.deadline)}</span></span>
+          ${kind === 'prove-bet' ? amt(item.stake) : ''}
+          <span class="qp-go" aria-hidden="true">›</span>
+        </button>`).join('')}</div>`;
   }
 
   function bets() {
@@ -247,16 +396,20 @@
         <div class="quick" style="margin-bottom:.75rem">${Content.TEMPLATES.map((tpl, i) => `<button type="button" class="sm" data-action="template" data-i="${i}">${esc(tpl.label)}</button>`).join('')}</div>
         <form data-form="bet">
           <label>What will you do? <input name="title" required maxlength="120" placeholder="e.g. Run 5 km" autocomplete="off"></label>
-          <div class="form-row">
-            <label>Stake <span class="hint" id="stake-hint">max ${RULES.MAX_STAKE_BY_TIER[defaultTier]} for this proof</span>
-              <input name="stake" type="number" min="1" step="1" required value="10" inputmode="numeric"></label>
-            <label>Proof
-              <select name="proofTier" data-action="tier-change">
-                <option value="0">Honor · max ${RULES.MAX_STAKE_BY_TIER[0]}</option>
-                <option value="1" selected>Live photo · max ${RULES.MAX_STAKE_BY_TIER[1]}</option>
-                <option value="2" disabled>Partner · max ${RULES.MAX_STAKE_BY_TIER[2]} (Phase 1)</option>
-                <option value="3" disabled>Integration · max ${RULES.MAX_STAKE_BY_TIER[3]} (Phase 1)</option>
-              </select></label>
+          <label>Proof
+            <select name="proofTier" data-action="tier-change">
+              <option value="0">Honor · max ${RULES.MAX_STAKE_BY_TIER[0]}</option>
+              <option value="1" selected>Live photo · max ${RULES.MAX_STAKE_BY_TIER[1]}</option>
+              <option value="2" disabled>Partner · max ${RULES.MAX_STAKE_BY_TIER[2]} (Phase 1)</option>
+              <option value="3" disabled>Integration · max ${RULES.MAX_STAKE_BY_TIER[3]} (Phase 1)</option>
+            </select></label>
+          <div class="stake-picker">
+            <label for="bet-stake">Stake <span class="hint" id="stake-hint">max ${RULES.MAX_STAKE_BY_TIER[defaultTier]} for this proof · tap chips to add</span></label>
+            <div class="stake-input-wrap">${chipIco()}<input id="bet-stake" name="stake" type="number" min="1" step="1" required value="10" inputmode="numeric"></div>
+            <div class="chip-row">
+              ${[1, 5, 10, 25].map(v => `<button type="button" class="chip-btn c${v}" data-action="add-chip" data-v="${v}" aria-label="Add ${v} credits">${v}</button>`).join('')}
+              <button type="button" class="sm ghost" data-action="clear-chips">Clear</button>
+            </div>
           </div>
           <label>Deadline
             <div class="quick">
@@ -284,7 +437,7 @@
             </div>
           </details>
           <p class="small muted mb0">You can cancel within 10 minutes. After that it's live. Missed stakes are locked for 30 days, not lost.</p>
-          <div><button class="primary big-cta" type="submit">Stake it</button></div>
+          <div><button class="primary big-cta" type="submit">Place bet</button></div>
         </form>
       </div>
 
@@ -300,7 +453,7 @@
     return `<div class="page-head"><div><h1>Vault</h1><p class="muted">Locked, not lost. Earn it back with something harder.</p></div></div>
       ${balancesBlock()}
       ${st.everLocked ? `<p class="small muted mt">Over time: ${fmtCredits(st.everLocked)} locked, ${fmtCredits(st.recovered)} recovered (${st.recoveryRate}%).</p>` : ''}
-      <div class="section-title"><h2>Locked</h2><span class="small muted">${locked.length}</span></div>
+      <div class="section-title"><h2>Locked</h2><span class="count-badge">${locked.length}</span></div>
       ${locked.length ? `<div class="stack">${locked.map(e => entryCard(e, true)).join('')}</div>` : `<div class="card soft"><p class="mb0">Nothing in the Vault. That's the goal.</p></div>`}
       ${history.length ? `<div class="section-title"><h2>History</h2><button class="sm ghost" data-action="toggle-vault-history">${ui.vaultHistory ? 'Hide' : 'Show'} ${history.length}</button></div>
         ${ui.vaultHistory ? `<div class="stack">${history.map(e => entryCard(e, true)).join('')}</div>` : ''}` : ''}
@@ -316,7 +469,7 @@
       ${balancesBlock()}
       <p class="small muted mt">wallet ${fmtCredits(b.wallet)} + at stake ${fmtCredits(b.atStake)} + in vault ${fmtCredits(b.inVault)} + decayed ${fmtCredits(b.decayed)} = ${fmtCredits(b.total)} · granted ${fmtCredits(b.granted)}</p>
       ${problems.length ? `<div class="card" style="border-color:var(--missed)"><strong>Problems</strong><ul>${problems.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>` : ''}
-      <div class="card mt">
+      <div class="card mt ledger-card">
         <table class="ledger"><thead><tr><th>When</th><th>What</th><th class="n">Δ</th><th class="n">Wallet</th></tr></thead><tbody>
           ${rows.map(l => `<tr><td class="muted">${l.at ? esc(fmtWhen(l.at)) : '—'}</td><td><span class="pill">${l.reason}</span> ${esc(l.note)}</td>
             <td class="n ${l.delta > 0 ? 'pos' : l.delta < 0 ? 'neg' : 'muted'}">${l.delta > 0 ? '+' : ''}${l.delta ? fmtCredits(l.delta) : '·'}</td><td class="n">${fmtCredits(l.balanceAfter)}</td></tr>`).join('')}
@@ -333,13 +486,59 @@
       </section>`).join('')}</div>`;
   }
 
+  // ---------- install / phone setup ----------
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; if (ui.tab === 'settings') render(); });
+  window.addEventListener('appinstalled', () => { installPrompt = null; toast('Vault installed. Long-press its icon for "Prove it now".', 'win'); });
+  const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isStandalone = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  const appUrl = () => location.origin + location.pathname;
+
+  function phoneCard() {
+    const proveUrl = appUrl() + '#prove';
+    const local = /^(localhost|127\.|\[::1\])/.test(location.hostname);
+    const ios = isIOS();
+    return `<div class="card phone-card" id="phone">
+      <h2>Put Vault on your phone</h2>
+      <p class="small muted">One tap from your lock screen to a live challenge.</p>
+      ${local ? `<p class="small" style="color:var(--partial)">You're on a local preview. Open the live site on your phone to set this up.</p>` : ''}
+      <label>Quick prove link <span class="hint">opens straight to the camera for whatever is due</span>
+        <div class="row" style="flex-wrap:nowrap"><input readonly value="${esc(proveUrl)}" id="prove-url"><button type="button" data-action="copy-prove-url">Copy</button></div></label>
+      ${installPrompt ? `<button class="primary big-cta mt" data-action="install">Install Vault</button>` : ''}
+      <div class="setup-tabs mt">
+        <details ${ios ? 'open' : ''}><summary><strong>iPhone</strong></summary>
+          <p class="small mt"><strong>Lock screen button</strong> (iOS 18+)</p>
+          <ol class="steps small">
+            <li>Tap <strong>Copy</strong> above.</li>
+            <li>Open the <strong>Shortcuts</strong> app → <strong>+</strong> → add the action <strong>Open URLs</strong> → paste the link. Name it <strong>Prove it</strong>.</li>
+            <li>Lock your phone, then long-press the lock screen → <strong>Customize</strong> → <strong>Lock Screen</strong>.</li>
+            <li>Tap the flashlight or camera button at the bottom → remove it → <strong>+</strong> → <strong>Shortcut</strong> → <strong>Prove it</strong>.</li>
+          </ol>
+          <p class="small mt"><strong>Home screen icon:</strong> in the shortcut's menu, tap <strong>Add to Home Screen</strong>.</p>
+          <p class="small muted">Heads up: on iPhone, Safari and a Safari "Add to Home Screen" app keep separate data. The shortcut opens Safari, so use Safari (or the shortcut icon) for everything and your bets stay in one place.</p>
+        </details>
+        <details ${ios ? '' : 'open'}><summary><strong>Android</strong></summary>
+          <ol class="steps small mt">
+            <li>Open this site in <strong>Chrome</strong> → menu <strong>⋮</strong> → <strong>Install app</strong> (or tap Install above).</li>
+            <li>Long-press the Vault icon → drag <strong>Prove it now</strong> onto your home screen for a one-tap button.</li>
+          </ol>
+        </details>
+      </div>
+      ${isStandalone() ? '<p class="small mb0 mt" style="color:var(--done)">✓ Running as an installed app.</p>' : ''}
+    </div>`;
+  }
+
   function settings() {
     const off = state.settings.clockOffset || 0;
     return `<div class="page-head"><div><h1>Settings</h1><p class="muted">Your data lives in this browser only.</p></div></div>
       <div class="stack">
+        ${phoneCard()}
         <div class="card"><h2>Profile</h2>
           <form data-form="settings"><label>Your name <input name="name" maxlength="60" value="${esc(state.settings.name)}" placeholder="e.g. Sam"></label>
           <div><button class="primary" type="submit">Save</button></div></form></div>
+        <div class="card"><h2>Sound</h2>
+          <label class="toggle-row"><span>Chip sounds and win chimes <span class="hint">quiet, and only after you tap something</span></span>
+            <input type="checkbox" data-action="sound-toggle" ${state.settings.sound !== false ? 'checked' : ''}></label></div>
         <div class="card"><h2>Real money</h2>
           <p class="small muted">Off, and not available yet (Phase 2). When it ships it will be opt-in, with a Stripe hold that is only captured if a stake decays, so we never hold your funds and never keep them.</p>
           <label class="row" style="font-weight:400"><input type="checkbox" disabled style="width:auto"> Enable real money (coming later)</label></div>
@@ -375,35 +574,61 @@
     return '';
   }
 
+  function sheetTarget(s) { return s.kind === 'prove-bet' ? Core.betById(state, s.id) : Core.redemptionById(state, s.id); }
+  function fmtClock(ms) { ms = Math.max(0, ms); const sec = Math.ceil(ms / 1000); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+
   function proveSheet(s) {
     const isBet = s.kind === 'prove-bet';
-    const target = isBet ? Core.betById(state, s.id) : Core.redemptionById(state, s.id);
-    if (!target) { ui.sheet = null; return ''; }
+    const target = sheetTarget(s);
+    if (!target || target.status !== 'active') { ui.sheet = null; return ''; }
     const tier = target.proofTier;
     const measured = target.measure && target.measure.kind !== 'binary';
     const camOk = Camera.available() && !s.cameraError;
-    return `<div class="sheet-backdrop" data-action="close-sheet-backdrop"><div class="sheet" role="dialog" aria-modal="true">
+    const t = now();
+    const ch = target.challenge;
+    const chLive = !!(ch && t <= ch.expiresAt);
+    const cat = Content.challengeCategory(target.title);
+    let photo = '';
+    if (tier >= 1) {
+      if (!camOk) {
+        photo = `<div class="card soft"><p class="mb0 small">Camera unavailable${s.cameraError ? ': ' + esc(s.cameraError) : ''}. You can self-attest; it will be marked "camera unavailable" in the ledger.</p></div>`;
+      } else if (s.shot) {
+        photo = `<div class="challenge-card done"><span class="eyebrow">Challenge done</span><div class="ch-text">${esc(ch ? ch.text : '')}</div></div>
+          <div class="cam-wrap"><img class="shot" src="${s.shot}" alt="your proof photo"></div>
+          <div class="row">${chLive ? `<button type="button" data-action="retake">Retake</button><span class="small muted">You can retake until the timer ends.</span>` : '<span class="small muted">Photo taken in time. It counts.</span>'}</div>`;
+      } else if (!chLive) {
+        photo = `<div class="challenge-card sealed">
+          <div class="seal" aria-hidden="true">?</div>
+          <span class="eyebrow">Live challenge · ${esc(cat.label)}</span>
+          <p class="mb0">${ch ? 'Time ran out. Draw a new one when you\'re ready.' : 'A random action to do on camera, so an old or staged photo won\'t work. It stays hidden until you\'re ready.'}</p>
+          <p class="small muted">You'll have <strong>2 minutes</strong> to take the photo.</p>
+          <button type="button" class="primary big-cta" data-action="reveal-challenge">${ch ? 'Draw a new challenge' : 'I\'m ready, reveal it'}</button>
+        </div>`;
+      } else {
+        photo = `<div class="challenge-card live">
+            <div class="row spread"><span class="eyebrow">Your challenge</span><span class="ch-timer" data-chtimer="${ch.expiresAt}">${fmtClock(ch.expiresAt - t)}</span></div>
+            <div class="ch-text">${esc(ch.text)}</div>
+            <div class="ch-bar"><div data-chbar="${ch.issuedAt}|${ch.expiresAt}" style="width:${Math.max(0, (ch.expiresAt - t) / (ch.expiresAt - ch.issuedAt) * 100)}%"></div></div>
+          </div>
+          <div class="cam-wrap"><video class="cam" id="cam" playsinline muted></video>
+            <div class="cam-overlay">${target.proofCode}</div>
+            <button type="button" class="cam-flip" data-action="flip-cam" aria-label="Switch between front and back camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg></button>
+          </div>
+          <button type="button" class="primary big-cta" data-action="capture">Take photo</button>`;
+      }
+    }
+    const ready = tier < 1 || !camOk || !!s.shot;
+    return `<div class="sheet-backdrop" data-action="close-sheet-backdrop"><div class="sheet" role="dialog" aria-modal="true" aria-label="Prove it">
       <button class="ghost close" data-action="close-sheet" aria-label="Close">✕</button>
       <h2>Prove it</h2>
       <p><strong>${esc(target.title)}</strong> · ${esc(measureText(target.measure))} · ${countdown(target.deadline)}</p>
       <form data-form="proof" data-kind="${s.kind}" data-id="${target.id}">
-        ${tier >= 1 ? `
-          <p class="small muted">Live photo. Your proof code <span class="code">${target.proofCode}</span> is stamped on the shot; have it in frame (write it on paper or show it on another screen).</p>
-          <div class="cam-wrap">
-            ${s.shot ? `<img class="shot" src="${s.shot}" alt="your proof photo">` :
-              camOk ? `<video class="cam" id="cam" playsinline muted></video><div class="cam-overlay">${target.proofCode}</div>` :
-              `<div class="card soft"><p class="mb0 small">Camera unavailable${s.cameraError ? ': ' + esc(s.cameraError) : ''}. You can self-attest; it will be marked "camera unavailable" in the ledger.</p></div>`}
-          </div>
-          <div class="row">
-            ${s.shot ? `<button type="button" data-action="retake">Retake</button>` : camOk ? `<button type="button" class="primary" data-action="capture">Take photo</button>` : ''}
-          </div>` : `
-          <label class="row" style="font-weight:500"><input type="checkbox" name="attest" required style="width:auto"> I did this. On my honor.</label>`}
-        ${!isBet && measured ? `<label>How much did you do? <span class="hint">target ${target.measure.amount} ${esc(target.measure.unit)}; less than the target unlocks a share and uses a chance</span>
-          <input name="done" type="number" min="0" step="any" value="${target.measure.amount}" required></label>` : ''}
-        <label>Note <span class="hint">optional</span><input name="note" maxlength="200" placeholder="How did it go?"></label>
-        <div class="row">
-          <button class="primary big-cta" type="submit" ${tier >= 1 && camOk && !s.shot ? 'disabled' : ''}>${isBet ? 'Submit proof, keep my ' + fmtCredits(target.stake) + ' credits' : 'Submit proof'}</button>
-        </div>
+        ${tier >= 1 ? photo : `<label class="row" style="font-weight:500"><input type="checkbox" name="attest" required style="width:auto"> I did this. On my honor.</label>`}
+        ${ready ? `
+          ${!isBet && measured ? `<label>How much did you do? <span class="hint">target ${target.measure.amount} ${esc(target.measure.unit)}; less than the target unlocks a share and uses a chance</span>
+            <input name="done" type="number" min="0" step="any" value="${target.measure.amount}" required></label>` : ''}
+          <label>Note <span class="hint">optional</span><input name="note" maxlength="200" placeholder="How did it go?"></label>
+          <button class="primary big-cta" type="submit">${isBet ? 'Submit proof, keep my ' + fmtCredits(target.stake) + ' credits' : 'Submit proof'}</button>` : ''}
       </form></div></div>`;
   }
 
@@ -458,6 +683,14 @@
 
   // ---------- after render ----------
   async function afterRender() {
+    animateCounts();
+    const xp = app.querySelector('[data-xp]');
+    if (xp) {
+      const to = Number(xp.dataset.xp);
+      xp.style.width = (ui.lastXp == null ? 0 : ui.lastXp) + '%';
+      requestAnimationFrame(() => requestAnimationFrame(() => { xp.style.width = to + '%'; }));
+      ui.lastXp = to;
+    }
     // focus the first field of an open sheet
     const first = sheetRoot.querySelector('input:not([type=hidden]):not([type=checkbox]), select, textarea, button.primary');
     if (first && !sheetRoot.contains(document.activeElement)) setTimeout(() => first.focus(), 0);
@@ -479,24 +712,50 @@
       el.textContent = left < 0 ? 'overdue' : fmtDur(left) + (el.dataset.label ? ' ' + el.dataset.label : '');
       el.classList.toggle('urgent', left < HOUR); el.classList.toggle('soon', left >= HOUR && left < 6 * HOUR);
     });
+    let expired = false;
+    document.querySelectorAll('[data-chtimer]').forEach(el => {
+      const left = Number(el.dataset.chtimer) - t;
+      el.textContent = fmtClock(left); el.classList.toggle('urgent', left < 30 * 1000);
+      if (left <= 0) expired = true;
+    });
+    document.querySelectorAll('[data-chbar]').forEach(el => {
+      const [a, b] = el.dataset.chbar.split('|').map(Number);
+      el.style.width = Math.max(0, (b - t) / (b - a) * 100) + '%';
+    });
+    if (expired && ui.sheet && !ui.sheet.shot) { toast('Time ran out. Draw a new challenge when you\'re ready.', 'lock'); render(); }
   }, 1000);
   setInterval(() => { if (!ui.sheet) tickAndMaybeRender(); }, 30 * 1000);
 
   // ---------- celebration ----------
   function celebrate() {
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (reducedMotion()) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     const c = document.createElement('canvas');
-    c.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:40';
-    c.width = innerWidth; c.height = innerHeight; document.body.appendChild(c);
-    const ctx = c.getContext('2d');
-    const colors = ['#2f6fed', '#1e9d64', '#f0b43c', '#ef6b6b', '#6a9bff'];
-    const parts = Array.from({ length: 120 }, () => ({ x: c.width / 2, y: c.height / 3, vx: (Math.random() - .5) * 14, vy: -Math.random() * 12 - 4, r: 4 + Math.random() * 4, col: colors[Math.floor(Math.random() * colors.length)], rot: Math.random() * 6 }));
+    c.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:55';
+    c.width = innerWidth * dpr; c.height = innerHeight * dpr; document.body.appendChild(c);
+    const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
+    const colors = ['#c99a3a', '#c99a3a', '#c2413b', '#2f5fc9', '#17855a'];
+    const W = innerWidth, H = innerHeight;
+    const parts = Array.from({ length: 70 }, () => ({
+      x: W / 2 + (Math.random() - .5) * 60, y: H * .42, vx: (Math.random() - .5) * 13, vy: -Math.random() * 13 - 5,
+      r: 8 + Math.random() * 6, col: colors[Math.floor(Math.random() * colors.length)], spin: Math.random() * 6, vs: .08 + Math.random() * .18
+    }));
+    function chip(p) {
+      const sx = Math.abs(Math.cos(p.spin)) * .85 + .15; // coin-flip squash
+      ctx.save(); ctx.translate(p.x, p.y); ctx.scale(sx, 1);
+      ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(0, 0, p.r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = p.r * .26; ctx.setLineDash([p.r * .5, p.r * .5]);
+      ctx.beginPath(); ctx.arc(0, 0, p.r * .84, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(0, 0, p.r * .5, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
     const t0 = performance.now();
     (function frame(t) {
       const dt = (t - t0) / 1000;
-      ctx.clearRect(0, 0, c.width, c.height);
-      for (const p of parts) { p.vy += .35; p.x += p.vx; p.y += p.vy; p.rot += .1; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.col; ctx.globalAlpha = Math.max(0, 1 - dt / 1.8); ctx.fillRect(-p.r / 2, -p.r / 2, p.r, p.r * .6); ctx.restore(); }
-      if (dt < 1.9) requestAnimationFrame(frame); else c.remove();
+      ctx.clearRect(0, 0, W, H);
+      ctx.globalAlpha = Math.max(0, Math.min(1, (2.3 - dt) / .5));
+      for (const p of parts) { p.vy += .42; p.vx *= .995; p.x += p.vx; p.y += p.vy; p.spin += p.vs; chip(p); }
+      if (dt < 2.3) requestAnimationFrame(frame); else c.remove();
     })(t0);
   }
 
@@ -555,12 +814,22 @@
       case 'open-prove-redemption': ui.sheet = { kind: 'prove-redemption', id: btn.dataset.id }; render(); break;
       case 'open-redeem': ui.sheet = { kind: 'redeem', id: btn.dataset.id }; render(); break;
 
+      case 'reveal-challenge': {
+        const target = sheetTarget(ui.sheet); if (!target) break;
+        const pick = Content.pickChallenge(target.title, target.challenge && target.challenge.text);
+        if (tryRun(() => Core.drawChallenge(state, ui.sheet.kind === 'prove-bet' ? 'bet' : 'redemption', target.id, pick.text, now()))) Sfx.chip();
+        break;
+      }
       case 'capture': {
         const v = document.getElementById('cam'); if (!v) break;
-        const target = ui.sheet.kind === 'prove-bet' ? Core.betById(state, ui.sheet.id) : Core.redemptionById(state, ui.sheet.id);
-        ui.sheet.shot = Camera.capture(v, target.proofCode); Camera.stop(); render(); break;
+        const target = sheetTarget(ui.sheet);
+        const ch = target.challenge;
+        if (!ch || now() > ch.expiresAt) { toast('Time ran out. Draw a new challenge.', 'lock'); render(); break; }
+        ui.sheet.shot = Camera.capture(v, target.proofCode, ch.text); ui.sheet.shotAt = now();
+        Camera.stop(); Sfx.chip(); render(); break;
       }
-      case 'retake': ui.sheet.shot = null; render(); break;
+      case 'retake': ui.sheet.shot = null; ui.sheet.shotAt = null; render(); break;
+      case 'flip-cam': Camera.flip(); render(); break;
 
       case 'cancel-bet': tryRun(() => Core.cancelBet(state, btn.dataset.id, now()), 'Cancelled. Stake returned.'); break;
       case 'extend-bet': tryRun(() => Core.extendBet(state, btn.dataset.id, now()), 'Deadline pushed back 24 hours. Grace token spent.'); break;
@@ -577,6 +846,17 @@
       }
 
       case 'deadline-pick': ui.deadlinePick = btn.dataset.k; if (btn.dataset.k === 'custom') ui.customDeadline = now() + 24 * HOUR; render(); setTimeout(() => { const el = app.querySelector('[name="title"]'); if (el) el.focus(); }, 0); break;
+      case 'add-chip': {
+        const f = btn.closest('form'); if (!f) break;
+        const tier = Number(f.elements.proofTier.value), max = RULES.MAX_STAKE_BY_TIER[tier];
+        const cur = Number(f.elements.stake.value) || 0, want = cur + Number(btn.dataset.v);
+        f.elements.stake.value = Math.min(max, want);
+        if (want > max) toast(`Max ${max} credits on ${TIERS[tier].name.toLowerCase()} proof.`);
+        Sfx.chip();
+        btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop');
+        break;
+      }
+      case 'clear-chips': { const f = btn.closest('form'); if (f) { f.elements.stake.value = ''; f.elements.stake.focus(); } break; }
       case 'bet-filter': ui.betFilter = btn.dataset.f; render(); break;
       case 'toggle-vault-history': ui.vaultHistory = !ui.vaultHistory; render(); break;
 
@@ -586,7 +866,16 @@
         Storage.save(state);
         const ev = Core.tick(state, now());
         toast(ms === 0 ? 'Clock reset.' : `Jumped forward ${fmtDur(ms)}. ${ev.length ? ev.length + ' thing' + (ev.length === 1 ? '' : 's') + ' happened.' : 'Nothing changed yet.'}`);
+        handleEvents(ev);
         commit(); break;
+      }
+      case 'install': if (installPrompt) { installPrompt.prompt(); installPrompt.userChoice.finally(() => { installPrompt = null; render(); }); } break;
+      case 'copy-prove-url': {
+        const url = appUrl() + '#prove';
+        const done = () => toast('Link copied. Paste it into a Shortcut.', 'win');
+        if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => { document.getElementById('prove-url').select(); toast('Select the link and copy it.'); });
+        else { document.getElementById('prove-url').select(); toast('Select the link and copy it.'); }
+        break;
       }
       case 'export': Storage.exportJSONWithMedia(state).then(json => download(`vault-${new Date(now()).toISOString().slice(0, 10)}.json`, json)); break;
       case 'import': document.getElementById('import-file').click(); break;
@@ -613,9 +902,14 @@
       };
       reader.readAsText(el.files[0]); el.value = ''; return;
     }
+    if (el.dataset.action === 'sound-toggle') {
+      state.settings.sound = el.checked; Storage.save(state);
+      if (el.checked) Sfx.chip();
+      return;
+    }
     if (el.dataset.action === 'tier-change') {
       const hint = document.getElementById('stake-hint'); const max = RULES.MAX_STAKE_BY_TIER[Number(el.value)];
-      if (hint) hint.textContent = `max ${max} for this proof`;
+      if (hint) hint.textContent = `max ${max} for this proof · tap chips to add`;
       const stake = el.form.elements.stake; if (Number(stake.value) > max) stake.value = max;
       return;
     }
@@ -656,7 +950,7 @@
         const deadline = ui.deadlinePick === 'custom' ? new Date(f.deadline).getTime() : quickDeadline(ui.deadlinePick);
         const measure = f.measureKind === 'binary' || !f.measureAmount ? { kind: 'binary' } : { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit || undefined };
         const bet = tryRun(() => Core.placeBet(state, { title: f.title, why: f.why, stake: Number(f.stake), deadline, proofTier: Number(f.proofTier), destination: f.destination || Content.DESTINATIONS[0], measure }, t));
-        if (bet) { toast(`Staked ${fmtCredits(bet.stake)} on "${bet.title}". Prove it by ${fmtWhen(bet.deadline)}.`); ui.betFilter = 'active'; setTab('today'); }
+        if (bet) { Sfx.stake(); toast(`${fmtCredits(bet.stake)} on the table for "${bet.title}". Prove it by ${fmtWhen(bet.deadline)}.`); ui.betFilter = 'active'; setTab('today'); }
         break;
       }
       case 'proof': {
@@ -666,14 +960,14 @@
         const shot = ui.sheet && ui.sheet.shot;
         const cameraUnavailable = needsPhoto && !shot;
         const finish = (mediaKey) => {
-          const proof = { kind: shot ? 'photo' : 'self', mediaKey, note: f.note, cameraUnavailable, done: f.done != null ? Number(f.done) : 1 };
+          const proof = { kind: shot ? 'photo' : 'self', mediaKey, note: f.note, cameraUnavailable, shotAt: ui.sheet && ui.sheet.shotAt, done: f.done != null ? Number(f.done) : 1 };
           const res = tryRun(() => kind === 'prove-bet' ? Core.submitBetProof(state, id, proof, t) : Core.submitRedemptionProof(state, id, proof, t));
           if (!res) return;
           ui.sheet = null; Camera.stop();
-          if (kind === 'prove-bet') { toast(`Proved it. ${fmtCredits(target.stake)} credits back in your wallet.`); celebrate(); }
-          else if (res.fraction >= 1) { toast(`Earned back ${fmtCredits(res.unlocked)} credits. Entry closed.`); celebrate(); }
-          else if (res.fraction > 0) toast(`Partial: ${fmtCredits(res.unlocked)} credits unlocked. One chance used.`);
-          else toast('Logged as a miss. One chance used. What got in the way?');
+          if (kind === 'prove-bet') { payout({ kicker: 'Proved it', amount: target.stake, sub: `Back in your wallet · ${target.title}` }); celebrate(); Sfx.win(); }
+          else if (res.fraction >= 1) { payout({ kicker: 'Earned it back', amount: res.unlocked, sub: 'Out of the Vault and into your wallet.' }); celebrate(); Sfx.win(); }
+          else if (res.fraction > 0) { toast(`Partial: ${fmtCredits(res.unlocked)} credits unlocked. One chance used.`, 'win'); Sfx.chip(); }
+          else toast('Logged as a miss. One chance used. What got in the way?', 'lock');
           commit();
         };
         if (shot) { const key = Core.uid('media'); Storage.putMedia(key, shot).then(() => finish(key)).catch(() => finish(null)); }
@@ -683,7 +977,7 @@
       case 'redeem': {
         const challenge = { title: f.title, measure: { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit }, deadline: new Date(f.deadline).getTime(), proofTier: Number(f.proofTier) };
         const r = tryRun(() => Core.createRedemption(state, form.dataset.id, challenge, t));
-        if (r) { ui.sheet = null; toast(`Challenge on. Harder by ${r.harderBy.join(', ')}. ${fmtWhen(r.deadline)}.`); commit(); }
+        if (r) { ui.sheet = null; Sfx.stake(); toast(`Challenge on. Harder by ${r.harderBy.join(', ')}. ${fmtWhen(r.deadline)}.`); commit(); }
         break;
       }
       case 'settings': state.settings.name = (f.name || '').trim(); commit(); toast('Saved'); break;
@@ -705,5 +999,8 @@
     state.settings.lastSeenAt = t;
     Storage.save(state);
     setTab(location.hash.slice(1) || 'today');
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
   })();
 })();

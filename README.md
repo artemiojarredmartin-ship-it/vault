@@ -23,6 +23,10 @@ fair before a single real dollar moves.
 
 Win three in a row and you earn a **grace token**: spend it to push one deadline back 24 hours. Every credit movement is in the Ledger, which shows a live "Balanced" check.
 
+## Try it
+
+**Live:** https://jarvisagimuspicard-hub.github.io/vault/ (installable on your phone; Settings → "Put Vault on your phone" sets up a one-tap lock-screen button).
+
 ## Run it
 
 ```bash

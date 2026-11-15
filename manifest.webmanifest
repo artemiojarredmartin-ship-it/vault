@@ -1,0 +1,21 @@
+{
+  "name": "Vault — bet on yourself",
+  "short_name": "Vault",
+  "description": "Bet on yourself. Prove it with a live challenge. Missed stakes are locked, not lost.",
+  "id": "./",
+  "start_url": "./#today",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a110e",
+  "theme_color": "#0f5a3d",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Prove it now", "short_name": "Prove", "url": "./#prove", "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96", "type": "image/png" }] },
+    { "name": "New bet", "short_name": "New bet", "url": "./#bets", "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96", "type": "image/png" }] }
+  ]
+}

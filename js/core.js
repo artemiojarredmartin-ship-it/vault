@@ -22,7 +22,8 @@
     MIN_WINDOW_MS: 5 * MIN,
     GRACE_EVERY_WINS: 3,
     GRACE_MAX: 3,
-    GRACE_EXTENSION_MS: 24 * HOUR
+    GRACE_EXTENSION_MS: 24 * HOUR,
+    CHALLENGE_WINDOW_MS: 2 * MIN
   };
 
   const TIERS = {
@@ -147,13 +148,33 @@
   }
 
   /** proof: { kind: 'self'|'photo', mediaKey?, note?, cameraUnavailable? } */
+  // ---------- live challenges ----------
+  // A photo proof gets a random action to perform ("10 jumping jacks outside") and a short window to shoot it,
+  // so a staged or old photo can't match. Drawing again replaces the challenge and restarts the window.
+  function drawChallenge(state, kind, id, text, now) {
+    const target = kind === 'bet' ? betById(state, id) : redemptionById(state, id);
+    assert(target && target.status === 'active', 'This is not active.');
+    assert(target.proofTier >= 1, 'Honor bets do not use challenges.');
+    assert(typeof text === 'string' && text.trim(), 'A challenge needs instructions.');
+    target.challenge = { text: text.trim(), issuedAt: now, expiresAt: now + RULES.CHALLENGE_WINDOW_MS, draws: ((target.challenge && target.challenge.draws) || 0) + 1 };
+    return target.challenge;
+  }
+  function checkChallenge(target, proof) {
+    const ch = target.challenge;
+    if (proof.kind !== 'photo' || !ch) return null;
+    const at = proof.shotAt;
+    assert(at != null && at >= ch.issuedAt && at <= ch.expiresAt, 'That photo was taken outside the 2-minute challenge window. Draw a new challenge and try again.');
+    return ch.text;
+  }
+
   function submitBetProof(state, betId, proof, now) {
     const bet = betById(state, betId);
     assert(bet && bet.status === 'active', 'This bet is not active.');
     assert(now <= bet.deadline, 'The deadline has passed.');
     if (bet.proofTier >= 1) assert(proof.kind === 'photo' || proof.cameraUnavailable, 'This bet needs a live photo.');
+    const challenge = checkChallenge(bet, proof);
     const p = { id: uid('proof'), betId, redemptionId: null, kind: proof.kind, mediaKey: proof.mediaKey || null, note: (proof.note || '').trim(),
-      capturedAt: now, code: bet.proofCode, verdict: 'accepted', verdictBy: 'auto', reason: proof.cameraUnavailable ? 'cameraUnavailable' : '' };
+      capturedAt: now, code: bet.proofCode, challenge, verdict: 'accepted', verdictBy: 'auto', reason: proof.cameraUnavailable ? 'cameraUnavailable' : '' };
     state.proofs.push(p);
     bet.proofIds.push(p.id);
     bet.status = 'won';
@@ -263,11 +284,12 @@
     const entry = entryById(state, r.vaultEntryId);
     assert(entry.status === 'locked', 'Entry is no longer locked.');
     if (r.proofTier >= 1) assert(proof.kind === 'photo' || proof.cameraUnavailable, 'This redemption needs a live photo.');
+    const challenge = checkChallenge(r, proof);
 
     const done = Math.max(0, Number(proof.done));
     const fraction = Math.min(1, done / r.measure.amount);
     const p = { id: uid('proof'), betId: r.betId, redemptionId: r.id, kind: proof.kind, mediaKey: proof.mediaKey || null, note: (proof.note || '').trim(),
-      capturedAt: now, code: r.proofCode, verdict: fraction > 0 ? 'accepted' : 'rejected', verdictBy: 'auto', reason: proof.cameraUnavailable ? 'cameraUnavailable' : '', done };
+      capturedAt: now, code: r.proofCode, challenge, verdict: fraction > 0 ? 'accepted' : 'rejected', verdictBy: 'auto', reason: proof.cameraUnavailable ? 'cameraUnavailable' : '', done };
     state.proofs.push(p);
     r.proofIds.push(p.id);
     r.resolvedAt = now;
@@ -339,8 +361,29 @@
     };
   }
 
+  // ---------- rank (cosmetic progression; points = bets won + Vault entries fully earned back) ----------
+  const RANKS = [
+    { name: 'Rookie', at: 0 },
+    { name: 'Regular', at: 3 },
+    { name: 'Contender', at: 8 },
+    { name: 'High Roller', at: 15 },
+    { name: 'Legend', at: 30 }
+  ];
+  function rank(state) {
+    const points = state.bets.filter(b => b.status === 'won').length + state.vault.filter(e => e.status === 'redeemed').length;
+    let i = 0;
+    while (i + 1 < RANKS.length && points >= RANKS[i + 1].at) i++;
+    const cur = RANKS[i], next = RANKS[i + 1] || null;
+    return {
+      name: cur.name, level: i + 1, points,
+      next: next ? next.name : null,
+      toNext: next ? next.at - points : 0,
+      progress: next ? (points - cur.at) / (next.at - cur.at) : 1
+    };
+  }
+
   return {
-    RULES, TIERS, MEASURE_KINDS, MIN, HOUR, DAY,
+    RULES, TIERS, RANKS, rank, drawChallenge, MEASURE_KINDS, MIN, HOUR, DAY,
     blank, uid, round,
     betById, entryById, redemptionById, entryForBet, activeRedemptionFor,
     balances, checkInvariants, stats,

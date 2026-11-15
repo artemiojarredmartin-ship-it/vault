@@ -11,6 +11,9 @@ keep forfeited money.** Phase 0 (current) is play credits only, no backend.
 
 The original build prompt with competitor research is `docs/BET_ON_YOURSELF_PROMPT.md`.
 
+## Live site
+https://jarvisagimuspicard-hub.github.io/vault/ (GitHub Pages from `main`; pushing to main deploys). `#prove` is the one-tap proof page used by the phone lock-screen shortcut.
+
 ## Commands
 ```bash
 npm test                        # node --test, covers js/core.js
@@ -28,7 +31,8 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 | `js/camera.js` | `getUserMedia` capture, stamps proof code + time, downscales to ≤640px JPEG. |
 | `js/feedback.js` | Gibb supportive-vs-defensive language helper (from the Checkpoint prototype). Not wired into the Vault UI yet; intended for partner messages in Phase 1. |
 | `js/content.js` | Learn content, prompts, decay destinations. |
-| `tests/core.test.js` | 19 tests incl. a 300-step random fuzz on the money invariant. |
+| `sw.js` + `manifest.webmanifest` | Installable app + offline. Network-first service worker; bump `VERSION` there together with the `?v=` tags in index.html. Manifest shortcut "Prove it now" → `#prove`. |
+| `tests/core.test.js` | 22 tests incl. a 300-step random fuzz on the money invariant. |
 
 ## Invariants (tests assert these; keep them true)
 - `wallet + atStake + inVault + decayed == granted` at all times (`Core.checkInvariants`).
@@ -36,11 +40,14 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 - `chancesLeft` never negative; decayed entries can't be redeemed; full redemption success costs no chance.
 - `Core.tick` is idempotent.
 - Grace: 1 token per 3 consecutive wins, max 3 held; `extendBet` adds 24h once per bet and costs a token.
+- Live challenges: photo proof starts with `Core.drawChallenge` (random text from `Content.pickChallenge`, matched to the bet title's category). The photo's `shotAt` must fall inside the 2-minute window (`RULES.CHALLENGE_WINDOW_MS`). Redrawing restarts the window; reopening the sheet keeps the live one (no rerolling for an easy one). Core only checks the window when a challenge exists; the UI always draws one first.
+- Rank (`Core.rank`) is cosmetic only: points = bets won + entries fully earned back. It never touches credits.
 
 ## Conventions
 - Rules in `core.js`, never in `app.js`. UI calls Core and shows the thrown message as a toast (`tryRun`).
 - `now()` in app.js includes `settings.clockOffset` (the Settings "time machine"). Never call `Date.now()` directly in Core.
 - Escape all user text with `esc()` before putting it in HTML.
+- Look: card-room theme (felt green, gold, chips). Classy, never flashy: no odds, jackpots or slot imagery, and copy stays honest (play credits, we never keep money). Bump the `?v=` tags in index.html when CSS/JS change.
 - Mobile-first; test at 375px. Dark mode via `prefers-color-scheme`.
 - Keep it dependency-free until Phase 1 (Supabase) actually needs otherwise.
 
