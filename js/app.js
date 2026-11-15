@@ -19,7 +19,7 @@
 
   const app = document.getElementById('app');
   const sheetRoot = document.getElementById('sheet-root');
-  const TABS = ['today', 'prove', 'bets', 'vault', 'ledger', 'learn', 'settings'];
+  const TABS = ['today', 'prove', 'bets', 'league', 'vault', 'ledger', 'learn', 'settings'];
 
   // ---------- time (supports the testing "time machine") ----------
   function now() { return Date.now() + (state.settings.clockOffset || 0); }
@@ -210,7 +210,7 @@
   // ---------- render ----------
   function render() {
     Core.tick(state, now());
-    const views = { today, prove, bets, vault, ledger, learn, settings };
+    const views = { today, prove, bets, league, vault, ledger, learn, settings };
     app.innerHTML = views[ui.tab]();
     sheetRoot.innerHTML = ui.sheet ? sheet() : '';
     document.body.style.overflow = ui.sheet ? 'hidden' : '';
@@ -566,6 +566,186 @@
       </div>`;
   }
 
+  // ---------- League (demo) ----------
+  // Rules live in js/league.js. This demo keeps its own storage key and never touches credits.
+  const LKEY = 'vault.league.demo.v1';
+  let lg = (() => { try { return JSON.parse(localStorage.getItem(LKEY)) || null; } catch (e) { return null; } })();
+  function saveLeague() { try { if (lg) localStorage.setItem(LKEY, JSON.stringify(lg)); else localStorage.removeItem(LKEY); } catch (e) { /* private mode */ } }
+  function ava(m, big) { return `<span class="ava${big ? ' big' : ''}" style="--ava:${m.color}" aria-hidden="true">${esc(m.name[0])}</span>`; }
+  function habitTitle(mid, hid) { const m = League.member(lg, mid); const h = m && m.habits.find(x => x.id === hid); return h ? h.title : ''; }
+  const nm = (mid) => mid === 'you' ? 'You' : esc(League.member(lg, mid).name);
+
+  function league() {
+    if (!lg) return leagueSetup();
+    const you = League.member(lg, 'you');
+    const wk = Math.min(lg.weeks - 1, League.weekOf(lg.day));
+    const mu = League.matchup(lg, wk, 'you');
+    const opp = League.member(lg, mu.opp);
+    const diff = mu.mine - mu.theirs;
+    const table = League.standings(lg);
+    const tierLabel = League.PUNISHMENTS[lg.tier].label;
+    return `<div class="page-head"><div><h1>${esc(lg.name)}</h1>
+        <p class="muted">${lg.finished ? 'Season over' : `Week ${wk + 1} of ${lg.weeks} · Day ${lg.day % 7 + 1} of 7`} · ${tierLabel} punishments</p></div>
+        <span class="pill accent">Demo</span></div>
+      ${lg.finished ? finaleCard(table) : ''}
+      <div class="felt matchup">
+        <div class="eyebrow" style="color:var(--gold-hi)">Week ${wk + 1} matchup${lg.finished ? ' · final' : ''}</div>
+        <div class="vs">
+          <div class="side">${ava(you, true)}<div class="who">You</div><div class="num" data-count="${mu.mine}" data-count-key="mu-you">${mu.mine}</div></div>
+          <div class="vs-mid">VS</div>
+          <div class="side">${ava(opp, true)}<div class="who">${esc(opp.name)}</div><div class="num" data-count="${mu.theirs}" data-count-key="mu-opp">${mu.theirs}</div></div>
+        </div>
+        <div class="mu-status">${diff > 0 ? `You're up by ${diff}` : diff < 0 ? `${esc(opp.name)} is up by ${-diff}` : 'Dead even'}</div>
+      </div>
+      ${lg.finished ? '' : `<div class="card mt">
+        <div class="row spread"><h3 class="mb0">Your habits today</h3><span class="small muted">+10 each · streaks add +2/day</span></div>
+        <div class="lg-habits">${you.habits.map(h => {
+          const done = lg.log.find(e => e.day === lg.day && e.member === 'you' && e.habit === h.id && (e.kind === 'proof' || e.kind === 'fake'));
+          const streak = League.streakBefore(lg, 'you', h.id, lg.day);
+          return `<div class="lg-habit"><span class="t">${esc(h.title)}${streak ? ` <span class="streak-chip">🔥${streak}</span>` : ''}</span>
+            ${done ? `<span class="pill done">✓ +${done.points}</span>` : `<button class="primary sm" data-action="lg-prove" data-id="${h.id}">Prove it</button>`}</div>`;
+        }).join('')}</div>
+        <div class="sim-row">
+          <button data-action="lg-end-day">End day ▸</button>
+          <button class="ghost" data-action="lg-sim" data-n="week">Sim week ⏩</button>
+          <button class="ghost" data-action="lg-sim" data-n="season">Sim season ⏭</button>
+        </div>
+        <p class="hint mb0">Demo: your friends are bots. In the real app, Prove it opens the live challenge camera and days end on their own. Sim buttons auto-play you about 75% of the time.</p>
+      </div>`}
+
+      <div class="section-title"><h2>Standings</h2><span class="small muted">last place spins</span></div>
+      <div class="card ledger-card"><table class="ledger standings">
+        <thead><tr><th>#</th><th>Player</th><th>W–L${table.some(r => r.t) ? '–T' : ''}</th><th class="n">Pts</th></tr></thead>
+        <tbody>${table.map((r, i) => `<tr class="${r.id === 'you' ? 'me' : ''} ${i === table.length - 1 ? 'zone' : ''}">
+          <td>${i === 0 ? '🏆' : i === table.length - 1 ? '🔻' : i + 1}</td>
+          <td><span class="who-cell">${ava(League.member(lg, r.id))}${r.id === 'you' ? 'You' : esc(r.name)}</span></td>
+          <td>${r.w}–${r.l}${table.some(x => x.t) ? '–' + r.t : ''}</td><td class="n">${r.pts}</td></tr>`).join('')}</tbody>
+      </table></div>
+
+      <div class="section-title"><h2>Group feed</h2><span class="small muted">call sus on shady proofs</span></div>
+      <div class="card feed">${feedHtml()}</div>
+
+      <details class="card mt punish-list"><summary><strong>Punishment list</strong> · ${tierLabel}</summary>
+        <ul class="small">${League.pool(lg).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+        <form data-form="lg-custom" class="mt">
+          <label>Suggest your own <span class="hint">the league votes; nothing unsafe, public or over $${League.MONEY_CAP}</span>
+            <div class="row" style="flex-wrap:nowrap"><input name="text" maxlength="120" placeholder="e.g. Wear a cape to class" required>
+            <select name="tier" style="max-width:8.5rem">${League.TIER_ORDER.map(t => `<option value="${t}" ${t === lg.tier ? 'selected' : ''}>${League.PUNISHMENTS[t].label}</option>`).join('')}</select></div></label>
+          <div><button type="submit">Put it to a vote</button></div>
+        </form>
+      </details>
+      <div class="row mt"><button class="ghost sm danger" data-action="lg-reset">End demo league</button></div>`;
+  }
+
+  function feedHtml() {
+    const items = lg.log.slice(-40).reverse();
+    if (!items.length) return '<p class="muted small mb0">Nothing yet. Prove a habit or end the day to get things going.</p>';
+    let lastDay = null;
+    return items.map(e => {
+      const head = e.day !== lastDay ? `<div class="feed-day">Day ${e.day + 1}</div>` : '';
+      lastDay = e.day;
+      const reacts = ['🔥', '😂', '👀', '💪'].map(r => `<button class="react ${e.reacts && e.reacts[r] ? 'on' : ''}" data-action="lg-react" data-id="${e.id}" data-r="${r}" aria-label="React ${r}">${r}${e.reacts && e.reacts[r] ? ' ' + e.reacts[r] : ''}</button>`).join('');
+      let body = '';
+      if (e.kind === 'proof' || e.kind === 'fake') {
+        const m = League.member(lg, e.member);
+        const canSus = !lg.finished && e.member !== 'you' && !e.sus && e.kind === 'proof' && e.day >= lg.day - 1;
+        body = `${ava(m)}<div class="fb"><div><strong>${nm(e.member)}</strong> ${e.kind === 'fake' ? '<s>proved</s>' : 'proved'} <em>${esc(habitTitle(e.member, e.habit))}</em>${e.streak > 1 ? ` <span class="streak-chip">🔥${e.streak}</span>` : ''}</div>
+          ${e.sus ? `<div class="small ${e.sus.verdict === 'fake' ? 'neg' : 'pos'}">${nm(e.sus.by)} called sus · vote ${e.sus.yes}–${e.sus.no} · ${e.sus.verdict === 'fake' ? 'FAKE' : 'legit ✓'}</div>` : ''}
+          <div class="reacts">${reacts}${canSus ? `<button class="sus" data-action="lg-sus" data-id="${e.id}">Sus?</button>` : ''}</div></div>
+          <span class="pts ${e.points >= 0 ? 'pos' : 'neg'}">${e.points > 0 ? '+' : ''}${e.points}</span>`;
+      } else if (e.kind === 'miss') {
+        body = `${ava(League.member(lg, e.member))}<div class="fb muted"><strong>${nm(e.member)}</strong> missed <em>${esc(habitTitle(e.member, e.habit))}</em></div><span class="pts neg">${e.points}</span>`;
+      } else if (e.kind === 'result') {
+        const w = e.pa === e.pb ? null : e.pa > e.pb ? e.a : e.b;
+        body = `<span class="ava trophy" aria-hidden="true">⚑</span><div class="fb"><strong>Week ${e.week + 1} final:</strong> ${nm(e.a)} ${e.pa} – ${e.pb} ${nm(e.b)}${w ? ` · <span class="gold-text">${nm(w)} win${w === 'you' ? '' : 's'}</span>` : ' · tie'}</div>`;
+      } else if (e.kind === 'chat') {
+        body = `${ava(League.member(lg, e.member))}<div class="fb"><strong>${nm(e.member)}:</strong> “${esc(e.text)}”<div class="reacts">${reacts}</div></div>`;
+      }
+      return `${head}<div class="feed-item ${e.kind}">${body}</div>`;
+    }).join('');
+  }
+
+  function finaleCard(table) {
+    const r = lg.result;
+    if (!r) {
+      return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over</div>
+        <h2>Who finished last?</h2><p class="muted">🏆 ${nm(table[0].id)} ${table[0].id === 'you' ? 'win' : 'wins'} the season.</p>
+        <button class="primary big-cta" data-action="lg-reveal">Reveal the loser</button></div>`;
+    }
+    const loser = League.member(lg, r.loser), isYou = r.loser === 'you';
+    return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over · last place</div>
+      <div class="loser">${ava(loser, true)}<h2 class="mb0">${isYou ? 'You' : esc(loser.name)}</h2></div>
+      <div class="reel-wrap"><div class="reel-label">${isYou ? 'You have to' : esc(loser.name) + ' has to'}</div>
+        <div class="reel" data-reel>${esc(r.punishment)}</div>
+        <div class="small muted">${League.PUNISHMENTS[r.tier].label}${r.vetoUsed ? ' · veto used' : ''}</div></div>
+      ${r.proved ? `<p class="mb0" style="color:#8dffc6">✓ Punishment served. Proof is in the group feed.</p>` : `<div class="row" style="justify-content:center">
+        ${isYou && !r.vetoUsed ? `<button class="ghost" data-action="lg-veto">Use my veto (1 left)</button>` : ''}
+        <button class="primary" data-action="lg-served">${isYou ? 'Upload proof I did it' : 'Demand proof'}</button></div>`}
+      <div class="row mt" style="justify-content:center"><button class="ghost sm" data-action="lg-new">Start a new season</button></div>
+    </div>`;
+  }
+
+  function leagueSetup() {
+    return `<div class="page-head"><div><h1>League</h1><p class="muted">Fantasy-style habits with friends. Last place does the punishment.</p></div><span class="pill accent">Demo</span></div>
+      <div class="felt intro">
+        <div class="eyebrow" style="color:var(--gold-hi)">How it works</div>
+        <h2>Your friends. Your habits. One loser.</h2>
+        <div class="how-grid">
+          <div><b>1</b>Everyone picks daily habits</div>
+          <div><b>2</b>Face one friend each week</div>
+          <div><b>3</b>Prove it for points, call sus on fakes</div>
+          <div><b>4</b>Last place spins the punishment wheel</div>
+        </div>
+      </div>
+      <div class="card mt">
+        <form data-form="league-create">
+          <label>League name <input name="name" value="The Grind House" maxlength="40" required></label>
+          <div class="form-row">
+            <label>Your habit 1 <input name="h1" value="Up by 7am" maxlength="60" required></label>
+            <label>Your habit 2 <input name="h2" value="Read 20 pages" maxlength="60"></label>
+          </div>
+          <label>Season length <select name="weeks"><option value="2">2 weeks</option><option value="3" selected>3 weeks</option><option value="4">4 weeks</option></select></label>
+          <fieldset class="tier-pick"><legend>Punishment level</legend>
+            ${League.TIER_ORDER.map(t => `<label class="tier-opt"><input type="radio" name="tier" value="${t}" ${t === 'medium' ? 'checked' : ''}>
+              <span><strong>${League.PUNISHMENTS[t].label}</strong><small>${esc(League.PUNISHMENTS[t].items[0])}</small><small>${esc(League.PUNISHMENTS[t].items[1])}</small></span></label>`).join('')}
+          </fieldset>
+          <div class="card soft small"><strong>House rules.</strong> Everyone sees the punishment list before joining. Punishments stay inside the group. Each loser gets one veto. Nothing dangerous, illegal, sexual or over $${League.MONEY_CAP}. You can suggest your own once the league starts.</div>
+          <div class="invite"><span class="small muted">Invite link</span><code>vault.app/join/GRIND-7Q2</code><span class="pill">demo</span></div>
+          <button class="primary big-cta" type="submit">Start the season with 5 demo friends</button>
+        </form>
+      </div>`;
+  }
+
+  function animateReel() {
+    const el = app.querySelector('[data-reel]');
+    if (!el || !ui.lgSpin || !lg || !lg.result) return;
+    ui.lgSpin = false;
+    const final = lg.result.punishment;
+    if (reducedMotion()) { el.textContent = final; return; }
+    const options = League.pool(lg, lg.result.tier);
+    let i = 0, delay = 50;
+    el.classList.add('spinning');
+    (function step() {
+      if (!el.isConnected) return;
+      if (delay > 420) { el.textContent = final; el.classList.remove('spinning'); el.classList.add('landed'); Sfx.lock(); return; }
+      el.textContent = options[i++ % options.length]; Sfx.chip();
+      delay *= 1.16; setTimeout(step, delay);
+    })();
+  }
+
+  function leagueEvents(evs) {
+    for (const ev of evs) {
+      if (ev.type === 'sus' && ev.entry.member === 'you') toast(`${League.member(lg, ev.by).name} called sus on your proof · vote ${ev.result.yes}–${ev.result.no} · ${ev.result.verdict === 'fake' ? 'ruled FAKE' : 'legit ✓'}`, ev.result.verdict === 'fake' ? 'lock' : 'win');
+      if (ev.type === 'week') {
+        const mu = League.matchup(lg, ev.week, 'you');
+        const won = mu.mine > mu.theirs, tie = mu.mine === mu.theirs;
+        toast(`Week ${ev.week + 1}: You ${mu.mine} – ${mu.theirs} ${League.member(lg, mu.opp).name}. ${tie ? 'Tie.' : won ? 'W 🏆' : 'L'}`, won ? 'win' : 'lock');
+        if (won) { Sfx.win(); celebrate(); } else if (!tie) Sfx.lock();
+      }
+      if (ev.type === 'season') toast('Season over. Who finished last?', 'win');
+    }
+  }
+
   // ---------- sheets (prove / redeem) ----------
   function sheet() {
     const s = ui.sheet;
@@ -684,6 +864,7 @@
   // ---------- after render ----------
   async function afterRender() {
     animateCounts();
+    if (ui.tab === 'league') animateReel();
     const xp = app.querySelector('[data-xp]');
     if (xp) {
       const to = Number(xp.dataset.xp);
@@ -846,6 +1027,29 @@
       }
 
       case 'deadline-pick': ui.deadlinePick = btn.dataset.k; if (btn.dataset.k === 'custom') ui.customDeadline = now() + 24 * HOUR; render(); setTimeout(() => { const el = app.querySelector('[name="title"]'); if (el) el.focus(); }, 0); break;
+      case 'lg-prove': { const e2 = (() => { try { return League.prove(lg, btn.dataset.id); } catch (err) { toast(err.message); return null; } })(); if (e2) { saveLeague(); Sfx.chip(); toast(`+${e2.points} · ${habitTitle('you', e2.habit)}`, 'win'); render(); } break; }
+      case 'lg-end-day': { const ev = League.endDay(lg, Math.random, 0); saveLeague(); leagueEvents(ev); render(); break; }
+      case 'lg-sim': {
+        const all = [];
+        do { all.push(...League.endDay(lg, Math.random, .75)); } while (!lg.finished && (btn.dataset.n === 'season' || lg.day % 7 !== 0));
+        saveLeague(); leagueEvents(all.filter(e => e.type !== 'sus' || e.entry.day === lg.day - 1)); render(); break;
+      }
+      case 'lg-sus': {
+        try { const r = League.sus(lg, btn.dataset.id, 'you', Math.random); saveLeague(); toast(`Sus vote ${r.yes}–${r.no}: ${r.verdict === 'fake' ? 'ruled FAKE, −20 for them' : 'looks legit'}`, r.verdict === 'fake' ? 'win' : ''); Sfx.chip(); render(); }
+        catch (err) { toast(err.message); }
+        break;
+      }
+      case 'lg-react': { League.react(lg, btn.dataset.id, btn.dataset.r); saveLeague(); render(); break; }
+      case 'lg-reveal': { League.finish(lg, Math.random); ui.lgSpin = true; saveLeague(); render(); break; }
+      case 'lg-veto': { try { League.veto(lg, Math.random); ui.lgSpin = true; saveLeague(); render(); } catch (err) { toast(err.message); } break; }
+      case 'lg-served': {
+        League.markServed(lg); saveLeague();
+        toast(lg.result.loser === 'you' ? 'Proof posted to the group. Debt paid.' : `${League.member(lg, lg.result.loser).name} posted proof. The group voted it legit ✓`, 'win');
+        Sfx.win(); render(); break;
+      }
+      case 'lg-new': case 'lg-reset':
+        if (a === 'lg-new' || confirm('End this demo league? Its scores and feed will be deleted.')) { lg = null; saveLeague(); render(); }
+        break;
       case 'add-chip': {
         const f = btn.closest('form'); if (!f) break;
         const tier = Number(f.elements.proofTier.value), max = RULES.MAX_STAKE_BY_TIER[tier];
@@ -978,6 +1182,18 @@
         const challenge = { title: f.title, measure: { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit }, deadline: new Date(f.deadline).getTime(), proofTier: Number(f.proofTier) };
         const r = tryRun(() => Core.createRedemption(state, form.dataset.id, challenge, t));
         if (r) { ui.sheet = null; Sfx.stake(); toast(`Challenge on. Harder by ${r.harderBy.join(', ')}. ${fmtWhen(r.deadline)}.`); commit(); }
+        break;
+      }
+      case 'league-create': {
+        try {
+          lg = League.create({ name: f.name, habits: [f.h1, f.h2], weeks: Number(f.weeks), tier: f.tier, you: state.settings.name || 'You' });
+          saveLeague(); Sfx.stake(); toast('Season on. Prove your habits, then end the day.', 'win'); render(); window.scrollTo({ top: 0 });
+        } catch (err) { toast(err.message); }
+        break;
+      }
+      case 'lg-custom': {
+        try { const r = League.addCustom(lg, f.text, f.tier, Math.random); saveLeague(); toast(r.reason, r.approved ? 'win' : 'lock'); if (r.approved) render(); }
+        catch (err) { toast(err.message); }
         break;
       }
       case 'settings': state.settings.name = (f.name || '').trim(); commit(); toast('Saved'); break;

@@ -31,6 +31,7 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 | `js/camera.js` | `getUserMedia` capture, stamps proof code + time, downscales to ≤640px JPEG. |
 | `js/feedback.js` | Gibb supportive-vs-defensive language helper (from the Checkpoint prototype). Not wired into the Vault UI yet; intended for partner messages in Phase 1. |
 | `js/content.js` | Learn content, prompts, decay destinations. |
+| `js/league.js` | League demo rules (fantasy-style habit league vs 5 bot friends): round-robin matchups, scoring (+10 proof, +2/day streak capped at +10, −5 miss, −20 voted fake), sus votes, punishment tiers + vetted custom ones, finale + one veto. Pure, takes `rand`. Stored under localStorage `vault.league.demo.v1`; never touches credits. UI lives in app.js (`league()`). Tests in `tests/league.test.js`. |
 | `sw.js` + `manifest.webmanifest` | Installable app + offline. Network-first service worker; bump `VERSION` there together with the `?v=` tags in index.html. Manifest shortcut "Prove it now" → `#prove`. |
 | `tests/core.test.js` | 22 tests incl. a 300-step random fuzz on the money invariant. |
 

@@ -1,13 +1,13 @@
 /* Vault service worker: makes the app installable and usable offline.
  * Network first (so updates show up right away), cache as the offline fallback.
  * Bump VERSION with the ?v= tags in index.html. */
-const VERSION = '0.4';
+const VERSION = '0.5.1';
 const CACHE = 'vault-' + VERSION;
 const SHELL = [
   './', './index.html', './manifest.webmanifest',
   './css/style.css?v=' + VERSION,
   './js/core.js?v=' + VERSION, './js/storage.js?v=' + VERSION, './js/camera.js?v=' + VERSION,
-  './js/feedback.js?v=' + VERSION, './js/content.js?v=' + VERSION, './js/app.js?v=' + VERSION,
+  './js/feedback.js?v=' + VERSION, './js/content.js?v=' + VERSION, './js/league.js?v=' + VERSION, './js/app.js?v=' + VERSION,
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];
 
