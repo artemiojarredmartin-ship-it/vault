@@ -188,6 +188,8 @@
 
   // ---------- routing ----------
   function setTab(tab) {
+    const jm = /^join=([A-Za-z0-9]{4,8})$/.exec(tab || '');
+    if (jm) { cloud.joinCode = jm[1].toUpperCase(); ui.lgMode = null; tab = 'league'; if (cloud.ready) loadPreview(); }
     ui.tab = TABS.includes(tab) ? tab : 'today';
     if (location.hash !== '#' + ui.tab) history.replaceState(null, '', '#' + ui.tab);
     document.querySelectorAll('.tabs a').forEach(a => a.classList.toggle('active', a.dataset.nav === ui.tab));
@@ -211,6 +213,7 @@
   function render() {
     Core.tick(state, now());
     const views = { today, prove, bets, league, vault, ledger, learn, settings };
+    if (ui.tab !== 'league' && cloud.current) { Cloud.unsubscribe(); cloud.current = null; cloud.data = null; }
     app.innerHTML = views[ui.tab]();
     sheetRoot.innerHTML = ui.sheet ? sheet() : '';
     document.body.style.overflow = ui.sheet ? 'hidden' : '';
@@ -575,8 +578,7 @@
   function habitTitle(mid, hid) { const m = League.member(lg, mid); const h = m && m.habits.find(x => x.id === hid); return h ? h.title : ''; }
   const nm = (mid) => mid === 'you' ? 'You' : esc(League.member(lg, mid).name);
 
-  function league() {
-    if (!lg) return leagueSetup();
+  function demoLeague() {
     const you = League.member(lg, 'you');
     const wk = Math.min(lg.weeks - 1, League.weekOf(lg.day));
     const mu = League.matchup(lg, wk, 'you');
@@ -586,7 +588,7 @@
     const tierLabel = League.PUNISHMENTS[lg.tier].label;
     return `<div class="page-head"><div><h1>${esc(lg.name)}</h1>
         <p class="muted">${lg.finished ? 'Season over' : `Week ${wk + 1} of ${lg.weeks} · Day ${lg.day % 7 + 1} of 7`} · ${tierLabel} punishments</p></div>
-        <span class="pill accent">Demo</span></div>
+        <button class="ghost sm" data-action="lg-mode" data-m="">‹ Real leagues</button></div>
       ${lg.finished ? finaleCard(table) : ''}
       <div class="felt matchup">
         <div class="eyebrow" style="color:var(--gold-hi)">Week ${wk + 1} matchup${lg.finished ? ' · final' : ''}</div>
@@ -686,7 +688,7 @@
   }
 
   function leagueSetup() {
-    return `<div class="page-head"><div><h1>League</h1><p class="muted">Fantasy-style habits with friends. Last place does the punishment.</p></div><span class="pill accent">Demo</span></div>
+    return `<div class="page-head"><div><h1>League demo</h1><p class="muted">Play a season against 5 pretend friends.</p></div><button class="ghost sm" data-action="lg-mode" data-m="">‹ Real leagues</button></div>
       <div class="felt intro">
         <div class="eyebrow" style="color:var(--gold-hi)">How it works</div>
         <h2>Your friends. Your habits. One loser.</h2>
@@ -718,11 +720,14 @@
 
   function animateReel() {
     const el = app.querySelector('[data-reel]');
-    if (!el || !ui.lgSpin || !lg || !lg.result) return;
+    if (!el || !ui.lgSpin) return;
+    const real = ui.lgMode !== 'demo' && cloud.data && cloud.data.league.result;
+    const res = real ? cloud.data.league.result : lg && lg.result;
+    if (!res) return;
     ui.lgSpin = false;
-    const final = lg.result.punishment;
+    const final = res.punishment;
     if (reducedMotion()) { el.textContent = final; return; }
-    const options = League.pool(lg, lg.result.tier);
+    const options = real ? League.cloudPool(League.fromCloud(cloud.data, Cloud.today(cloud.data.league), me()), res.tier) : League.pool(lg, res.tier);
     let i = 0, delay = 50;
     el.classList.add('spinning');
     (function step() {
@@ -746,11 +751,315 @@
     }
   }
 
+  // ---------- Real leagues (Supabase) ----------
+  const cloud = { ready: false, booting: false, leagues: null, current: null, data: null, photos: {}, joinCode: null, preview: null, previewErr: null, busy: false };
+  const me = () => (Cloud.me() || {}).id;
+  const habitInputs = (a = 'Up by 7am', b = '') => `<div class="form-row">
+      <label>Your habit 1 <input name="h1" value="${esc(a)}" maxlength="60" required placeholder="e.g. Up by 7am"></label>
+      <label>Your habit 2 <span class="hint">optional</span><input name="h2" value="${esc(b)}" maxlength="60" placeholder="e.g. Read 20 pages"></label></div>`;
+  const tierPicker = (sel = 'medium') => `<fieldset class="tier-pick"><legend>Punishment level</legend>
+      ${League.TIER_ORDER.map(t => `<label class="tier-opt"><input type="radio" name="tier" value="${t}" ${t === sel ? 'checked' : ''}>
+        <span><strong>${League.PUNISHMENTS[t].label}</strong><small>${esc(League.PUNISHMENTS[t].items[0])}</small><small>${esc(League.PUNISHMENTS[t].items[1])}</small></span></label>`).join('')}
+    </fieldset>`;
+  const inviteUrl = (code) => appUrl() + '#join=' + code;
+
+  async function cloudBoot() {
+    if (cloud.ready || cloud.booting) return;
+    cloud.booting = true;
+    try { if (Cloud.available()) { await Cloud.restore(); if (Cloud.profile()) cloud.leagues = await Cloud.myLeagues(); } }
+    catch (err) { toast(err.message, 'lock'); }
+    cloud.ready = true; cloud.booting = false;
+    if (cloud.joinCode) loadPreview();
+    if (ui.tab === 'league') render();
+  }
+  async function loadPreview() {
+    cloud.preview = null; cloud.previewErr = null;
+    if (!Cloud.profile()) return;
+    try { cloud.preview = await Cloud.preview(cloud.joinCode); if (!cloud.preview) cloud.previewErr = 'No league with that code.'; }
+    catch (err) { cloud.previewErr = err.message; }
+    if (ui.tab === 'league') render();
+  }
+  async function cloudDo(fn, ok) {
+    if (cloud.busy) return null;
+    cloud.busy = true;
+    try { const r = await fn(); if (ok) toast(ok, 'win'); return r; }
+    catch (err) { toast(err.message, 'lock'); return null; }
+    finally { cloud.busy = false; }
+  }
+  async function openLeague(id) {
+    cloud.current = id; cloud.data = null; render();
+    await refreshLeague();
+    Cloud.subscribe(id, refreshLeague);
+  }
+  function closeLeague() { Cloud.unsubscribe(); cloud.current = null; cloud.data = null; Cloud.myLeagues().then(l => { cloud.leagues = l; render(); }).catch(() => {}); render(); }
+  async function refreshLeague() {
+    const id = cloud.current; if (!id) return;
+    try {
+      const d = await Cloud.load(id);
+      if (cloud.current !== id) return;
+      cloud.data = d;
+      const need = d.entries.map(e => e.photo_path).filter(p => p && !cloud.photos[p]);
+      if (need.length) Object.assign(cloud.photos, await Cloud.photoUrls(need));
+    } catch (err) { toast(err.message, 'lock'); }
+    if (ui.tab === 'league' && !(ui.sheet && ui.sheet.kind === 'prove-league')) render();
+  }
+
+  function league() {
+    if (ui.lgMode === 'demo') return lg ? demoLeague() : leagueSetup();
+    cloudBoot();
+    const head = (sub) => `<div class="page-head"><div><h1>League</h1><p class="muted">${sub}</p></div></div>`;
+    if (!cloud.ready) return head('Loading your leagues…') + '<div class="card"><p class="mb0 muted">Connecting…</p></div>';
+    if (!Cloud.available()) return head('Play with real friends') + `<div class="card"><p>Can't reach the league server right now. Check your connection and reload.</p><button data-action="lg-mode" data-m="demo">Try the demo instead</button></div>`;
+    if (!Cloud.profile()) return realSignup();
+    if (cloud.joinCode) return realJoin();
+    if (cloud.current) return realLeague();
+    return realHome();
+  }
+
+  function realSignup() {
+    return `<div class="page-head"><div><h1>League</h1><p class="muted">Fantasy-style habits with friends. Last place does the punishment.</p></div></div>
+      <div class="felt intro">
+        <div class="eyebrow" style="color:var(--gold-hi)">${cloud.joinCode ? 'You\'ve been invited' : 'Play with real friends'}</div>
+        <h2>Your friends. Your habits. One loser.</h2>
+        <div class="how-grid">
+          <div><b>1</b>Everyone picks daily habits</div>
+          <div><b>2</b>Face one friend each week</div>
+          <div><b>3</b>Prove it with a live photo, call sus on fakes</div>
+          <div><b>4</b>Last place spins the punishment wheel</div>
+        </div>
+      </div>
+      <div class="card mt"><form data-form="cloud-signup">
+        <label>Your name <span class="hint">what your friends will see</span><input name="name" maxlength="30" required autocomplete="nickname" placeholder="e.g. Jarred" value="${esc(state.settings.name || '')}"></label>
+        <p class="small muted mb0">No email or password. Your spot is saved on this phone, so use the same phone and browser each time.</p>
+        <button class="primary big-cta" type="submit">${cloud.joinCode ? 'Continue to the invite' : 'Let\'s go'}</button>
+      </form></div>
+      <div class="row mt" style="justify-content:center"><button class="ghost" data-action="lg-mode" data-m="demo">Just try the demo (pretend friends)</button></div>`;
+  }
+
+  function realJoin() {
+    const p = cloud.preview;
+    return `<div class="page-head"><div><h1>Join a league</h1><p class="muted">Code <span class="code">${esc(cloud.joinCode)}</span></p></div>
+        <button class="ghost sm" data-action="cl-cancel-join">Cancel</button></div>
+      ${cloud.previewErr ? `<div class="card"><p class="mb0">${esc(cloud.previewErr)}</p></div>` : !p ? '<div class="card"><p class="mb0 muted">Looking up the league…</p></div>' : p.started ? `<div class="card"><p class="mb0">"${esc(p.name)}" already started. Ask them to invite you next season.</p></div>` : `
+        <div class="felt intro"><div class="eyebrow" style="color:var(--gold-hi)">You're invited to</div><h2>${esc(p.name)}</h2>
+          <p class="muted mb0">${p.members} player${p.members === 1 ? '' : 's'} so far · ${p.weeks}-week season · ${League.PUNISHMENTS[p.tier].label} punishments</p></div>
+        <div class="card mt"><h3>The punishment list</h3><p class="small muted">Last place does one of these (or one the group votes in). You get one veto.</p>
+          <ul class="small">${League.PUNISHMENTS[p.tier].items.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
+        <div class="card mt"><form data-form="cloud-join">${habitInputs()}
+          <p class="small muted mb0">Pick habits you can prove with a photo every day.</p>
+          <button class="primary big-cta" type="submit">I'm in</button></form></div>`}`;
+  }
+
+  function realHome() {
+    const ls = cloud.leagues || [];
+    const status = (g) => !g.starts_on ? 'Lobby · waiting to start' : g.result ? 'Season over' : 'In season';
+    return `<div class="page-head"><div><h1>League</h1><p class="muted">Signed in as <strong>${esc(Cloud.profile().name)}</strong></p></div></div>
+      ${ls.length ? `<div class="stack">${ls.map(g => `<button class="quick-prove" data-action="cl-open" data-id="${g.id}">
+          <span class="qp-main"><span class="qp-title">${esc(g.name)}</span><span class="small muted">${status(g)} · ${League.PUNISHMENTS[g.tier].label}</span></span>
+          <span class="qp-go" aria-hidden="true">›</span></button>`).join('')}</div>` : ''}
+      <div class="card mt"><h2>Join with a code</h2>
+        <form data-form="cloud-code"><div class="row" style="flex-wrap:nowrap"><input name="code" maxlength="6" placeholder="ABC123" autocapitalize="characters" required style="text-transform:uppercase;font-family:var(--mono);letter-spacing:.2em"><button type="submit">Join</button></div></form></div>
+      <div class="card mt"><h2>Start a league</h2>
+        <form data-form="cloud-create">
+          <label>League name <input name="name" value="The Grind House" maxlength="40" required></label>
+          ${habitInputs()}
+          <label>Season length <select name="weeks"><option value="1">1 week (quick test)</option><option value="2">2 weeks</option><option value="3" selected>3 weeks</option><option value="4">4 weeks</option></select></label>
+          ${tierPicker()}
+          <div class="card soft small"><strong>House rules.</strong> Everyone sees the punishment list before joining. Punishments stay inside the group. Each loser gets one veto. Nothing dangerous, illegal, sexual, public or over $${League.MONEY_CAP}.</div>
+          <button class="primary big-cta" type="submit">Create league &amp; get invite link</button>
+        </form></div>
+      <div class="row mt" style="justify-content:center"><button class="ghost" data-action="lg-mode" data-m="demo">Try the demo with pretend friends</button></div>`;
+  }
+
+  function realLeague() {
+    const d = cloud.data;
+    const back = `<button class="ghost sm" data-action="cl-back">‹ Leagues</button>`;
+    if (!d) return `<div class="page-head"><div><h1>League</h1><p class="muted">Loading…</p></div>${back}</div>`;
+    const myId = me();
+    const v = League.fromCloud(d, Cloud.today(d.league), myId);
+    const isHost = d.league.created_by === myId;
+    const nameOf = (id) => id === myId ? 'You' : esc((League.member(v, id) || {}).name || 'Player');
+    const tierLabel = League.PUNISHMENTS[v.tier].label;
+    const punish = punishmentsCard(v, nameOf);
+    const headerHtml = `<div class="page-head"><div><h1>${esc(v.name)}</h1>
+        <p class="muted">${!v.started ? 'Lobby' : v.finished ? 'Season over' : `Week ${Math.floor(v.day / 7) + 1} of ${v.weeks} · Day ${v.day % 7 + 1} of 7`} · ${tierLabel} punishments</p></div>${back}</div>`;
+
+    if (!v.started) {
+      const url = inviteUrl(d.league.code);
+      return headerHtml + `<div class="felt intro">
+          <div class="eyebrow" style="color:var(--gold-hi)">Invite your friends</div>
+          <div class="invite-code">${esc(d.league.code)}</div>
+          <p class="small muted">Send this link. They tap it, type their name, pick habits, done.</p>
+          <div class="row" style="justify-content:center"><button class="primary" data-action="cl-share" data-url="${esc(url)}" data-name="${esc(v.name)}">Share invite link</button><button class="ghost" data-action="cl-copy" data-url="${esc(url)}">Copy link</button></div>
+        </div>
+        <div class="section-title"><h2>Players</h2><span class="count-badge">${v.members.length}</span></div>
+        <div class="card">${v.members.map(m => `<div class="lobby-row">${ava(m)}<div><strong>${nameOf(m.id)}</strong>${m.id === d.league.created_by ? ' <span class="pill">host</span>' : ''}<div class="small muted">${m.habits.map(h => esc(h.title)).join(' · ')}</div></div></div>`).join('')}</div>
+        ${isHost ? `<button class="primary big-cta mt" data-action="cl-start" ${v.members.length < 2 ? 'disabled' : ''}>${v.members.length < 2 ? 'Waiting for at least one friend…' : `Start the season (${v.members.length} players)`}</button>
+          <p class="hint">Day 1 is today. Once it starts, nobody else can join.</p>`
+        : `<div class="card soft mt"><p class="mb0">Waiting for the host to start the season.</p></div>`}
+        ${punish}
+        <div class="row mt"><button class="ghost sm danger" data-action="cl-leave">Leave league</button></div>`;
+    }
+
+    const wk = Math.min(v.weeks - 1, Math.floor(v.day / 7));
+    const mu = League.matchup(v, wk, myId);
+    const you = League.member(v, myId);
+    const table = League.standings(v);
+    let board;
+    if (mu) {
+      const opp = League.member(v, mu.opp), diff = mu.mine - mu.theirs;
+      board = `<div class="felt matchup"><div class="eyebrow" style="color:var(--gold-hi)">Week ${wk + 1} matchup${v.finished ? ' · final' : ''}</div>
+        <div class="vs"><div class="side">${ava(you, true)}<div class="who">You</div><div class="num" data-count="${mu.mine}" data-count-key="cmu-you">${mu.mine}</div></div>
+          <div class="vs-mid">VS</div>
+          <div class="side">${ava(opp, true)}<div class="who">${esc(opp.name)}</div><div class="num" data-count="${mu.theirs}" data-count-key="cmu-opp">${mu.theirs}</div></div></div>
+        <div class="mu-status">${diff > 0 ? `You're up by ${diff}` : diff < 0 ? `${esc(opp.name)} is up by ${-diff}` : 'Dead even'}</div></div>`;
+    } else {
+      const avg = Math.round(v.members.reduce((n, m) => n + League.points(v, m.id, wk), 0) / v.members.length);
+      const mine = League.points(v, myId, wk);
+      board = `<div class="felt matchup"><div class="eyebrow" style="color:var(--gold-hi)">Week ${wk + 1} · bye week</div>
+        <div class="vs"><div class="side">${ava(you, true)}<div class="who">You</div><div class="num">${mine}</div></div><div class="vs-mid">VS</div>
+          <div class="side"><span class="ava big" style="--ava:#555">≈</span><div class="who">League average</div><div class="num">${avg}</div></div></div>
+        <div class="mu-status">Odd number of players: beat the average to get the W.</div></div>`;
+    }
+    const today = v.finished ? '' : `<div class="card mt">
+        <div class="row spread"><h3 class="mb0">Your habits today</h3><span class="small muted">+10 each · streaks add +2/day</span></div>
+        <div class="lg-habits">${you.habits.map(h => {
+          const done = v.log.find(e => e.day === v.day && e.member === myId && e.habit === h.id && (e.kind === 'proof' || e.kind === 'fake'));
+          const prev = v.log.filter(e => e.member === myId && e.habit === h.id && e.day < v.day);
+          let streak = 0; for (let i = prev.length - 1; i >= 0 && prev[i].kind === 'proof'; i--) streak++;
+          return `<div class="lg-habit"><span class="t">${esc(h.title)}${streak ? ` <span class="streak-chip">🔥${streak}</span>` : ''}</span>
+            ${done ? `<span class="pill done">✓ +${done.points}</span>` : `<button class="primary sm" data-action="cl-prove" data-h="${esc(h.id)}" data-title="${esc(h.title)}" data-day="${v.day}">Prove it</button>`}</div>`;
+        }).join('')}</div>
+        <p class="hint mb0">Proof only counts today. Miss a day and it's −5.</p></div>`;
+
+    return headerHtml + (v.finished ? realFinale(v, table, isHost, nameOf) : '') + board + today + `
+      <div class="section-title"><h2>Standings</h2><span class="small muted">last place spins</span></div>
+      <div class="card ledger-card"><table class="ledger standings">
+        <thead><tr><th>#</th><th>Player</th><th>W–L${table.some(r => r.t) ? '–T' : ''}</th><th class="n">Pts</th></tr></thead>
+        <tbody>${table.map((r, i) => `<tr class="${r.id === myId ? 'me' : ''} ${i === table.length - 1 && table.length > 1 ? 'zone' : ''}">
+          <td>${i === 0 ? '🏆' : i === table.length - 1 ? '🔻' : i + 1}</td>
+          <td><span class="who-cell">${ava(League.member(v, r.id))}${nameOf(r.id)}</span></td>
+          <td>${r.w}–${r.l}${table.some(x => x.t) ? '–' + r.t : ''}</td><td class="n">${r.pts}</td></tr>`).join('')}</tbody></table></div>
+      <div class="section-title"><h2>Group feed</h2><span class="small muted">live</span></div>
+      <div class="card feed">
+        <form data-form="cloud-chat" class="chat-form"><div class="row" style="flex-wrap:nowrap"><input name="body" maxlength="280" placeholder="Talk your trash…" autocomplete="off" required><button type="submit">Send</button></div></form>
+        ${realFeed(v, nameOf)}</div>
+      ${punish}`;
+  }
+
+  function realFeed(v, nameOf) {
+    const myId = me();
+    const items = v.log.filter(e => e.kind !== 'miss' || e.day >= v.day - 2).slice(-60).reverse();
+    if (!items.length) return '<p class="muted small mb0">Nothing yet. Be the first to prove it.</p>';
+    let lastDay = null;
+    return items.map(e => {
+      const head = e.day !== lastDay ? `<div class="feed-day">Day ${e.day + 1}</div>` : '';
+      lastDay = e.day;
+      const reacts = e.id.startsWith('miss_') || e.id.startsWith('res_') ? '' : ['🔥', '😂', '👀', '💪'].map(r => `<button class="react ${e.mine && e.mine[r] ? 'on' : ''}" data-action="cl-react" data-id="${e.id}" data-r="${r}" data-on="${e.mine && e.mine[r] ? 0 : 1}" aria-label="React ${r}">${r}${e.reacts[r] ? ' ' + e.reacts[r] : ''}</button>`).join('');
+      let body = '';
+      const m = e.member && League.member(v, e.member);
+      if (e.kind === 'proof' || e.kind === 'fake') {
+        const url = e.photo && cloud.photos[e.photo];
+        const canVote = !v.finished && e.member !== myId && !e.myVote && (!e.sus || !e.sus.verdict) && e.day >= v.day - 1;
+        body = `${ava(m)}<div class="fb"><div><strong>${nameOf(e.member)}</strong> ${e.kind === 'fake' ? '<s>proved</s>' : 'proved'} <em>${esc((m.habits.find(h => h.id === e.habit) || {}).title || '')}</em>${e.streak > 1 ? ` <span class="streak-chip">🔥${e.streak}</span>` : ''}</div>
+          ${e.challenge ? `<div class="small muted">Challenge: ${esc(e.challenge)}</div>` : ''}
+          ${url ? `<button class="proof-pic" data-action="cl-photo" data-src="${esc(url)}" aria-label="View proof photo"><img src="${esc(url)}" alt="Proof photo" loading="lazy"></button>` : e.photo ? '' : '<div class="small" style="color:var(--partial)">No photo (camera unavailable)</div>'}
+          ${e.sus ? `<div class="small ${e.sus.verdict === 'fake' ? 'neg' : e.sus.verdict === 'legit' ? 'pos' : ''}">Sus vote ${e.sus.yes} fake – ${e.sus.no} legit · ${e.sus.verdict === 'fake' ? 'FAKE' : e.sus.verdict === 'legit' ? 'legit ✓' : e.sus.yes + e.sus.no >= v.members.length - 1 ? 'flagged (voiding needs 2 votes)' : 'voting…'}</div>` : ''}
+          <div class="reacts">${reacts}${canVote ? `<button class="sus" data-action="cl-vote" data-id="${e.id}" data-fake="1">Sus</button><button class="react" data-action="cl-vote" data-id="${e.id}" data-fake="0">Legit</button>` : e.myVote ? `<span class="small muted">You voted ${e.myVote.fake ? 'sus' : 'legit'}</span>` : ''}</div></div>
+          <span class="pts ${e.points >= 0 ? 'pos' : 'neg'}">${e.points > 0 ? '+' : ''}${e.points}</span>`;
+      } else if (e.kind === 'miss') {
+        body = `${ava(m)}<div class="fb muted"><strong>${nameOf(e.member)}</strong> missed <em>${esc((m.habits.find(h => h.id === e.habit) || {}).title || '')}</em></div><span class="pts neg">${e.points}</span>`;
+      } else if (e.kind === 'result') {
+        const w = e.pa === e.pb ? null : e.pa > e.pb ? e.a : e.b;
+        body = `<span class="ava trophy" aria-hidden="true">⚑</span><div class="fb"><strong>Week ${e.week + 1} final:</strong> ${nameOf(e.a)} ${e.pa} – ${e.pb} ${nameOf(e.b)}${w ? ` · <span class="gold-text">${nameOf(w)} win${w === myId ? '' : 's'}</span>` : ' · tie'}</div>`;
+      } else if (e.kind === 'chat') {
+        body = `${ava(m || { name: '?', color: '#888' })}<div class="fb"><div><strong>${nameOf(e.member)}:</strong> ${esc(e.text)}</div><div class="reacts">${reacts}</div></div>`;
+      }
+      return `${head}<div class="feed-item ${e.kind}">${body}</div>`;
+    }).join('');
+  }
+
+  function punishmentsCard(v, nameOf) {
+    const myId = me();
+    const pending = v.custom.filter(c => !c.approved);
+    return `<details class="card mt punish-list" ${pending.some(c => c.myVote == null) ? 'open' : ''}><summary><strong>Punishment list</strong> · ${League.PUNISHMENTS[v.tier].label}${pending.length ? ` · ${pending.length} to vote on` : ''}</summary>
+      <ul class="small">${League.cloudPool(v).map(p => `<li>${esc(p)}</li>`).join('')}</ul>
+      ${pending.length ? `<h3 class="mt">Suggested</h3>${pending.map(c => `<div class="lobby-row"><div style="flex:1"><strong>${esc(c.text)}</strong>
+          <div class="small muted">${League.PUNISHMENTS[c.tier].label} · by ${nameOf(c.by)} · ${c.yes} yes – ${c.no} no (needs ${Math.floor(v.members.length / 2) + 1})</div></div>
+          ${c.myVote == null ? `<button class="sm" data-action="cl-pvote" data-id="${c.id}" data-yes="1">Yes</button><button class="sm ghost" data-action="cl-pvote" data-id="${c.id}" data-yes="0">No</button>` : `<span class="small muted">voted ${c.myVote ? 'yes' : 'no'}</span>`}</div>`).join('')}` : ''}
+      ${v.finished ? '' : `<form data-form="cloud-suggest" class="mt">
+        <label>Suggest your own <span class="hint">the group votes; nothing unsafe, public or over $${League.MONEY_CAP}</span>
+          <div class="row" style="flex-wrap:nowrap"><input name="text" maxlength="120" placeholder="e.g. Wear a cape to class" required>
+          <select name="tier" style="max-width:8.5rem">${League.TIER_ORDER.map(t => `<option value="${t}" ${t === v.tier ? 'selected' : ''}>${League.PUNISHMENTS[t].label}</option>`).join('')}</select></div></label>
+        <div><button type="submit">Put it to a vote</button></div></form>`}
+    </details>`;
+  }
+
+  function realFinale(v, table, isHost, nameOf) {
+    const r = v.result, myId = me();
+    if (!r) {
+      return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over</div>
+        <h2>🏆 ${nameOf(table[0].id)} ${table[0].id === myId ? 'win' : 'wins'}</h2>
+        <p class="muted mb0">${isHost ? 'You\'re the host. Spin to reveal the loser\'s punishment.' : 'Waiting for the host to spin the wheel…'}</p>
+        ${isHost ? '<button class="primary big-cta" data-action="cl-spin">Spin the punishment wheel</button>' : ''}</div>`;
+    }
+    const loser = League.member(v, r.loser), isMe = r.loser === myId;
+    // keep the reel animation working: animateReel reads lg.result, so mirror it
+    return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over · last place</div>
+      <div class="loser">${ava(loser, true)}<h2 class="mb0">${isMe ? 'You' : esc(loser.name)}</h2></div>
+      <div class="reel-wrap"><div class="reel-label">${isMe ? 'You have to' : esc(loser.name) + ' has to'}</div>
+        <div class="reel" data-reel>${esc(r.punishment)}</div>
+        <div class="small muted">${League.PUNISHMENTS[r.tier].label}${r.vetoUsed ? ' · veto used' : ''}</div></div>
+      ${r.proved ? `<p class="mb0" style="color:#8dffc6">✓ Punishment served.</p>` : isMe ? `<div class="row" style="justify-content:center">
+          ${!r.vetoUsed ? '<button class="ghost" data-action="cl-veto">Use my veto (1 left)</button>' : ''}
+          <button class="primary" data-action="cl-served">I did it</button></div>
+          <p class="small muted mb0">Post your proof in the group chat, then tap "I did it".</p>` : '<p class="small muted mb0">The group is waiting on proof.</p>'}
+    </div>`;
+  }
+
+  // Live challenge for a league proof: stored per habit + day so closing the sheet can't reroll it.
+  const chKey = (s) => `vault.lgch.${s.league}.${s.habit}.${s.day}`;
+  function getCh(s) { try { return JSON.parse(localStorage.getItem(chKey(s))) || null; } catch (e) { return null; } }
+  function setCh(s, ch) { try { localStorage.setItem(chKey(s), JSON.stringify(ch)); } catch (e) { /* private mode: lives in memory */ } s.ch = ch; }
+
+  function leagueProveSheet(s) {
+    const ch = s.ch || getCh(s);
+    const t = Date.now();
+    const chLive = !!(ch && t <= ch.expiresAt);
+    const camOk = Camera.available() && !s.cameraError;
+    const cat = Content.challengeCategory(s.title);
+    let photo;
+    if (!camOk) photo = `<div class="card soft"><p class="mb0 small">Camera unavailable${s.cameraError ? ': ' + esc(s.cameraError) : ''}. You can still post, but the group will see there's no photo and may call sus.</p></div>`;
+    else if (s.shot) photo = `<div class="challenge-card done"><span class="eyebrow">Challenge done</span><div class="ch-text">${esc(ch ? ch.text : '')}</div></div>
+        <div class="cam-wrap"><img class="shot" src="${s.shot}" alt="your proof photo"></div>
+        <div class="row">${chLive ? '<button type="button" data-action="retake">Retake</button>' : '<span class="small muted">Photo taken in time. It counts.</span>'}</div>`;
+    else if (!chLive) photo = `<div class="challenge-card sealed"><div class="seal" aria-hidden="true">?</div>
+        <span class="eyebrow">Live challenge · ${esc(cat.label)}</span>
+        <p class="mb0">${ch ? 'Time ran out. Draw a new one when you\'re ready.' : 'A random action to do on camera. Your league sees the photo and can call sus.'}</p>
+        <p class="small muted">You'll have <strong>2 minutes</strong> to take the photo.</p>
+        <button type="button" class="primary big-cta" data-action="cl-reveal">${ch ? 'Draw a new challenge' : 'I\'m ready, reveal it'}</button></div>`;
+    else photo = `<div class="challenge-card live">
+          <div class="row spread"><span class="eyebrow">Your challenge</span><span class="ch-timer" data-chtimer="${ch.expiresAt}">${fmtClock(ch.expiresAt - t)}</span></div>
+          <div class="ch-text">${esc(ch.text)}</div>
+          <div class="ch-bar"><div data-chbar="${ch.issuedAt}|${ch.expiresAt}" style="width:${Math.max(0, (ch.expiresAt - t) / (ch.expiresAt - ch.issuedAt) * 100)}%"></div></div></div>
+        <div class="cam-wrap"><video class="cam" id="cam" playsinline muted></video>
+          <button type="button" class="cam-flip" data-action="flip-cam" aria-label="Switch between front and back camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></svg></button></div>
+        <button type="button" class="primary big-cta" data-action="cl-capture">Take photo</button>`;
+    const ready = !camOk || !!s.shot;
+    return `<div class="sheet-backdrop" data-action="close-sheet-backdrop"><div class="sheet" role="dialog" aria-modal="true" aria-label="Prove it">
+      <button class="ghost close" data-action="close-sheet" aria-label="Close">✕</button>
+      <h2>Prove it</h2><p><strong>${esc(s.title)}</strong> · today only</p>
+      <form data-form="cloud-proof">${photo}
+        ${ready ? `<button class="primary big-cta" type="submit" ${cloud.busy ? 'disabled' : ''}>Post to the league</button>` : ''}
+      </form></div></div>`;
+  }
+
   // ---------- sheets (prove / redeem) ----------
   function sheet() {
     const s = ui.sheet;
     if (s.kind === 'prove-bet' || s.kind === 'prove-redemption') return proveSheet(s);
     if (s.kind === 'redeem') return redeemSheet(s);
+    if (s.kind === 'prove-league') return leagueProveSheet(s);
     return '';
   }
 
@@ -1027,6 +1336,56 @@
       }
 
       case 'deadline-pick': ui.deadlinePick = btn.dataset.k; if (btn.dataset.k === 'custom') ui.customDeadline = now() + 24 * HOUR; render(); setTimeout(() => { const el = app.querySelector('[name="title"]'); if (el) el.focus(); }, 0); break;
+      case 'lg-mode': ui.lgMode = btn.dataset.m || null; if (ui.lgMode !== 'demo') cloudBoot(); render(); window.scrollTo({ top: 0 }); break;
+      case 'cl-cancel-join': cloud.joinCode = null; cloud.preview = null; history.replaceState(null, '', '#league'); render(); break;
+      case 'cl-open': openLeague(btn.dataset.id); break;
+      case 'cl-back': closeLeague(); break;
+      case 'cl-share': {
+        const url = btn.dataset.url, text = `Join my Vault league "${btn.dataset.name}". Bet on your habits, last place does the punishment.`;
+        if (navigator.share) navigator.share({ title: 'Vault league', text, url }).catch(() => {});
+        else navigator.clipboard.writeText(text + ' ' + url).then(() => toast('Invite copied. Paste it in your group chat.', 'win'), () => toast(url));
+        break;
+      }
+      case 'cl-copy': navigator.clipboard.writeText(btn.dataset.url).then(() => toast('Link copied', 'win'), () => toast(btn.dataset.url)); break;
+      case 'cl-start': cloudDo(() => Cloud.startLeague(cloud.current), 'Season on! Day 1 starts now.').then(r => { if (r) { Sfx.stake(); refreshLeague(); } }); break;
+      case 'cl-leave':
+        if (confirm('Leave this league?')) cloudDo(() => Cloud.leaveLeague(cloud.current), 'You left the league.').then(() => closeLeague());
+        break;
+      case 'cl-prove': {
+        ui.sheet = { kind: 'prove-league', league: cloud.current, habit: btn.dataset.h, title: btn.dataset.title, day: Number(btn.dataset.day) };
+        ui.sheet.ch = getCh(ui.sheet); render(); break;
+      }
+      case 'cl-reveal': {
+        const s2 = ui.sheet; const pick = Content.pickChallenge(s2.title, s2.ch && s2.ch.text);
+        const t0 = Date.now(); setCh(s2, { text: pick.text, issuedAt: t0, expiresAt: t0 + RULES.CHALLENGE_WINDOW_MS });
+        Sfx.chip(); render(); break;
+      }
+      case 'cl-capture': {
+        const v2 = document.getElementById('cam'); if (!v2) break;
+        const s2 = ui.sheet;
+        if (!s2.ch || Date.now() > s2.ch.expiresAt) { toast('Time ran out. Draw a new challenge.', 'lock'); render(); break; }
+        s2.shot = Camera.capture(v2, (cloud.data && cloud.data.league.code) || '', s2.ch.text); s2.shotAt = Date.now();
+        Camera.stop(); Sfx.chip(); render(); break;
+      }
+      case 'cl-vote': cloudDo(() => Cloud.vote(btn.dataset.id, btn.dataset.fake === '1'), btn.dataset.fake === '1' ? 'Called sus. The group decides.' : 'Voted legit.').then(refreshLeague); break;
+      case 'cl-react': cloudDo(() => Cloud.react(btn.dataset.id, btn.dataset.r, btn.dataset.on === '1')).then(refreshLeague); break;
+      case 'cl-pvote': cloudDo(() => Cloud.votePunishment(btn.dataset.id, btn.dataset.yes === '1'), 'Vote counted.').then(refreshLeague); break;
+      case 'cl-photo': { const w = window.open(btn.dataset.src, '_blank', 'noopener'); if (!w) toast('Allow pop-ups to view the photo.'); break; }
+      case 'cl-spin': {
+        const d = cloud.data; const v2 = League.fromCloud(d, Cloud.today(d.league), me());
+        const table = League.standings(v2); const loser = table[table.length - 1].id;
+        const pool = League.cloudPool(v2); const punishment = pool[Math.floor(Math.random() * pool.length)];
+        cloudDo(() => Cloud.setResult(d.league.id, { loser, punishment, tier: v2.tier })).then(r => { if (r) { ui.lgSpin = true; refreshLeague(); } });
+        break;
+      }
+      case 'cl-veto': {
+        const d = cloud.data; const v2 = League.fromCloud(d, Cloud.today(d.league), me()); const r0 = d.league.result;
+        const t = League.TIER_ORDER[Math.max(0, League.TIER_ORDER.indexOf(r0.tier) - 1)];
+        const opts = League.cloudPool(v2, t).filter(p => p !== r0.punishment);
+        cloudDo(() => Cloud.veto(d.league.id, opts[Math.floor(Math.random() * opts.length)], t)).then(r => { if (r) { ui.lgSpin = true; refreshLeague(); } });
+        break;
+      }
+      case 'cl-served': cloudDo(() => Cloud.served(cloud.current), 'Debt paid. Respect.').then(r => { if (r) { Sfx.win(); refreshLeague(); } }); break;
       case 'lg-prove': { const e2 = (() => { try { return League.prove(lg, btn.dataset.id); } catch (err) { toast(err.message); return null; } })(); if (e2) { saveLeague(); Sfx.chip(); toast(`+${e2.points} · ${habitTitle('you', e2.habit)}`, 'win'); render(); } break; }
       case 'lg-end-day': { const ev = League.endDay(lg, Math.random, 0); saveLeague(); leagueEvents(ev); render(); break; }
       case 'lg-sim': {
@@ -1182,6 +1541,47 @@
         const challenge = { title: f.title, measure: { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit }, deadline: new Date(f.deadline).getTime(), proofTier: Number(f.proofTier) };
         const r = tryRun(() => Core.createRedemption(state, form.dataset.id, challenge, t));
         if (r) { ui.sheet = null; Sfx.stake(); toast(`Challenge on. Harder by ${r.harderBy.join(', ')}. ${fmtWhen(r.deadline)}.`); commit(); }
+        break;
+      }
+      case 'cloud-signup':
+        cloudDo(() => Cloud.signUp(f.name)).then(async p => {
+          if (!p) return;
+          if (!state.settings.name) { state.settings.name = p.name; Storage.save(state); }
+          cloud.leagues = await Cloud.myLeagues().catch(() => []);
+          toast(`Welcome, ${p.name}.`, 'win'); if (cloud.joinCode) loadPreview(); render();
+        });
+        break;
+      case 'cloud-create':
+        cloudDo(() => Cloud.createLeague({ name: f.name, tier: f.tier, weeks: Number(f.weeks), habits: [f.h1, f.h2] }), 'League created. Now invite your friends.')
+          .then(g => { if (g) { Sfx.stake(); openLeague(g.id); } });
+        break;
+      case 'cloud-code': cloud.joinCode = String(f.code || '').trim().toUpperCase(); cloud.preview = null; loadPreview(); render(); break;
+      case 'cloud-join':
+        cloudDo(() => Cloud.joinLeague(cloud.joinCode, [f.h1, f.h2]), 'You\'re in.').then(id => {
+          if (!id) return;
+          cloud.joinCode = null; cloud.preview = null; history.replaceState(null, '', '#league'); Sfx.stake(); openLeague(id);
+        });
+        break;
+      case 'cloud-chat': {
+        const input = form.elements.body;
+        cloudDo(() => Cloud.postChat(cloud.current, f.body)).then(() => { input.value = ''; refreshLeague(); });
+        break;
+      }
+      case 'cloud-suggest': {
+        const bad = League.screenPunishment(f.text);
+        if (bad) { toast('Rejected: ' + bad, 'lock'); break; }
+        cloudDo(() => Cloud.suggest(cloud.current, f.text.trim(), f.tier), 'Suggested. The group votes now.').then(refreshLeague);
+        break;
+      }
+      case 'cloud-proof': {
+        const s2 = ui.sheet;
+        cloudDo(() => Cloud.postProof(s2.league, s2.habit, s2.day, s2.ch && s2.ch.text, s2.shot)).then(id => {
+          if (!id) { render(); return; }
+          ui.sheet = null; Camera.stop();
+          payout({ kicker: 'Posted to the league', amount: 10, sub: `${s2.title} · your friends can see it now` });
+          Sfx.win(); celebrate(); refreshLeague();
+        });
+        render();
         break;
       }
       case 'league-create': {

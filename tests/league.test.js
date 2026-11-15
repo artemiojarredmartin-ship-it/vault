@@ -119,3 +119,65 @@ test('a full random season always finishes with a loser', () => {
     assert.equal(lg.day, 21);
   }
 });
+
+// ---------- real (cloud) leagues ----------
+function cloudData(over = {}) {
+  const habits = (p) => [{ id: p + 'h1', title: 'Up by 7am' }];
+  return Object.assign({
+    league: { id: 'L', code: 'ABC123', name: 'Real', tier: 'mild', weeks: 1, starts_on: '2026-11-01', created_by: 'u1', result: null },
+    members: [
+      { user_id: 'u1', habits: habits('a'), joined_at: '1', profile: { name: 'Ann', color: '#111111' } },
+      { user_id: 'u2', habits: habits('b'), joined_at: '2', profile: { name: 'Ben', color: '#222222' } },
+      { user_id: 'u3', habits: habits('c'), joined_at: '3', profile: { name: 'Cal', color: '#333333' } }
+    ],
+    entries: [], votes: [], reactions: [], punishments: [], punishmentVotes: []
+  }, over);
+}
+const proof = (id, user, hid, day) => ({ id, user_id: user, kind: 'proof', habit_id: hid, day, created_at: `2026-11-0${day + 1}T10:00:00Z` });
+
+test('cloud: past days without proof are misses, today stays open, streaks build', () => {
+  const data = cloudData({ entries: [proof('e1', 'u1', 'ah1', 0), proof('e2', 'u1', 'ah1', 1), proof('e3', 'u1', 'ah1', 2)] });
+  const lg = League.fromCloud(data, 2, 'u1');
+  assert.equal(League.points(lg, 'u1'), 10 + 12 + 14);
+  assert.equal(League.points(lg, 'u2'), -10); // missed day 0 and 1; day 2 still open
+  assert.equal(lg.finished, false);
+});
+
+test('cloud: majority sus vote voids a proof; one vote alone does not', () => {
+  const e = proof('e1', 'u2', 'bh1', 0);
+  let lg = League.fromCloud(cloudData({ entries: [e], votes: [{ entry_id: 'e1', voter_id: 'u1', fake: true }] }), 1, 'u1');
+  assert.equal(lg.log.find(x => x.id === 'e1').kind, 'proof'); // 1 of 2 eligible: not a majority yet
+  lg = League.fromCloud(cloudData({ entries: [e], votes: [{ entry_id: 'e1', voter_id: 'u1', fake: true }, { entry_id: 'e1', voter_id: 'u3', fake: true }] }), 1, 'u1');
+  const x = lg.log.find(y => y.id === 'e1');
+  assert.equal(x.kind, 'fake'); assert.equal(x.points, League.SCORING.FAKE);
+});
+
+test('cloud: in a 2-player league one sus vote alone cannot void a proof', () => {
+  const data = cloudData();
+  data.members = data.members.slice(0, 2);
+  data.entries = [proof('e1', 'u2', 'bh1', 0)];
+  data.votes = [{ entry_id: 'e1', voter_id: 'u1', fake: true }];
+  const x = League.fromCloud(data, 1, 'u1').log.find(y => y.id === 'e1');
+  assert.equal(x.kind, 'proof');
+  assert.equal(x.sus.verdict, null);
+});
+
+test('cloud: season ends after weeks*7 days with week results and a standings loser', () => {
+  const entries = [];
+  for (let d = 0; d < 7; d++) entries.push(proof('a' + d, 'u1', 'ah1', d));
+  const lg = League.fromCloud(cloudData({ entries }), 7, 'u1');
+  assert.equal(lg.finished, true);
+  assert.ok(lg.log.some(e => e.kind === 'result'));
+  const table = League.standings(lg);
+  assert.equal(table[0].id, 'u1');
+});
+
+test('cloud: custom punishments enter the wheel only when a majority approves', () => {
+  const punishments = [{ id: 'p1', text: 'Wear a cape', tier: 'mild', proposed_by: 'u1' }];
+  let lg = League.fromCloud(cloudData({ punishments, punishmentVotes: [{ punishment_id: 'p1', voter_id: 'u1', yes: true }] }), 0, 'u1');
+  assert.ok(!League.cloudPool(lg).includes('Wear a cape'));
+  lg = League.fromCloud(cloudData({ punishments, punishmentVotes: [{ punishment_id: 'p1', voter_id: 'u1', yes: true }, { punishment_id: 'p1', voter_id: 'u2', yes: true }] }), 0, 'u1');
+  assert.ok(League.cloudPool(lg).includes('Wear a cape'));
+  assert.equal(League.screenPunishment('Post it on TikTok') !== null, true);
+  assert.equal(League.screenPunishment('Wear a cape to class'), null);
+});

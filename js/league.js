@@ -224,6 +224,13 @@
         const pa = points(lg, a, w), pb = points(lg, b, w);
         if (pa > pb) { row(a).w++; row(b).l++; } else if (pb > pa) { row(b).w++; row(a).l++; } else { row(a).t++; row(b).t++; }
       }
+      // Odd number of players: whoever sits out plays "the field" (beat the week's average to win).
+      const playing = new Set(lg.schedule[w].flat());
+      const byes = lg.members.filter(m => !playing.has(m.id));
+      if (byes.length) {
+        const avg = lg.members.reduce((n, m) => n + points(lg, m.id, w), 0) / lg.members.length;
+        for (const m of byes) { const p = points(lg, m.id, w); if (p > avg) row(m.id).w++; else if (p < avg) row(m.id).l++; else row(m.id).t++; }
+      }
     }
     return rows.sort((x, y) => (y.w + y.t / 2) - (x.w + x.t / 2) || y.pts - x.pts || x.name.localeCompare(y.name));
   }
@@ -276,9 +283,108 @@
 
   function markServed(lg) { assert(lg.result, 'No punishment yet.'); lg.result.proved = true; return lg.result; }
 
+  // ---------- real leagues ----------
+  // A sus vote is decided once a majority of the other members agree either way.
+  function susVerdict(votes, eligible) {
+    const yes = votes.filter(v => v.fake).length, no = votes.length - yes;
+    if (eligible <= 0) return { yes, no, verdict: null };
+    // Voiding needs a majority AND at least 2 people, so in a 2-player league your only opponent can't wipe you out alone.
+    if (yes > eligible / 2 && yes >= 2) return { yes, no, verdict: 'fake' };
+    if (no >= eligible / 2) return { yes, no, verdict: 'legit' };
+    return { yes, no, verdict: null };
+  }
+
+  // Build a league view (same shape the demo uses) from database rows.
+  // today = the league's current day number (0 = first day; negative = not started).
+  // Days before today with no proof count as misses; today is still open.
+  function fromCloud(data, today, me) {
+    const g = data.league;
+    const days = g.weeks * 7;
+    const startMs = g.starts_on ? Date.parse(g.starts_on + 'T00:00:00') : 0;
+    const members = data.members.slice().sort((a, b) => String(a.joined_at).localeCompare(String(b.joined_at)))
+      .map(m => ({ id: m.user_id, name: (m.profile && m.profile.name) || 'Player', color: (m.profile && m.profile.color) || '#888888', habits: m.habits || [], bot: false }));
+    const lg = {
+      v: 1, cloud: true, id: g.id, code: g.code, host: g.created_by, me,
+      name: g.name, weeks: g.weeks, days, tier: g.tier,
+      started: !!g.starts_on, day: Math.max(0, Math.min(today, days)), finished: !!g.starts_on && today >= days,
+      members, schedule: roundRobin(members.map(m => m.id), g.weeks),
+      custom: [], log: [], result: g.result || null
+    };
+    if (!g.starts_on) return lg;
+    const byKey = {};
+    for (const e of data.entries) if (e.kind === 'proof') byKey[e.user_id + '|' + e.habit_id + '|' + e.day] = e;
+    const votesBy = {}, reactsBy = {};
+    for (const v of data.votes || []) (votesBy[v.entry_id] = votesBy[v.entry_id] || []).push(v);
+    for (const r of data.reactions || []) (reactsBy[r.entry_id] = reactsBy[r.entry_id] || []).push(r);
+    const eligible = members.length - 1;
+    const last = Math.min(today, days - 1);
+    const streaks = {};
+    for (let d = 0; d <= last; d++) {
+      for (const m of members) {
+        for (const h of m.habits) {
+          const k = m.id + '|' + h.id;
+          const e = byKey[m.id + '|' + h.id + '|' + d];
+          if (e) {
+            const votes = votesBy[e.id] || [];
+            const sus = votes.length ? susVerdict(votes, eligible) : null;
+            const fake = sus && sus.verdict === 'fake';
+            const streak = fake ? 0 : (streaks[k] || 0);
+            const reacts = {}, mine = {};
+            for (const r of reactsBy[e.id] || []) { reacts[r.emoji] = (reacts[r.emoji] || 0) + 1; if (r.user_id === me) mine[r.emoji] = true; }
+            lg.log.push({ id: e.id, day: d, member: m.id, habit: h.id, kind: fake ? 'fake' : 'proof',
+              points: fake ? SCORING.FAKE : SCORING.PROOF + Math.min(SCORING.STREAK_CAP, streak * SCORING.STREAK_STEP),
+              streak: streak + 1, reacts, mine, sus: sus && { by: votes[0].voter_id, yes: sus.yes, no: sus.no, verdict: sus.verdict },
+              myVote: votes.find(v => v.voter_id === me) || null, photo: e.photo_path, challenge: e.challenge, t: Date.parse(e.created_at) });
+            streaks[k] = fake ? 0 : streak + 1;
+          } else if (d < today) {
+            lg.log.push({ id: 'miss_' + k + '_' + d, day: d, member: m.id, habit: h.id, kind: 'miss', points: SCORING.MISS, reacts: {}, t: startMs + (d + 1) * 864e5 - 1 });
+            streaks[k] = 0;
+          }
+        }
+      }
+      if ((d + 1) % 7 === 0 && d < today) {
+        const w = Math.floor(d / 7);
+        for (const [a, b] of lg.schedule[w] || []) {
+          lg.log.push({ id: 'res_' + w + a + b, day: d, kind: 'result', week: w, a, b, pa: points(lg, a, w), pb: points(lg, b, w), reacts: {}, t: startMs + (d + 1) * 864e5 });
+        }
+      }
+    }
+    for (const e of data.entries) {
+      if (e.kind !== 'chat') continue;
+      const reacts = {}, mine = {};
+      for (const r of reactsBy[e.id] || []) { reacts[r.emoji] = (reacts[r.emoji] || 0) + 1; if (r.user_id === me) mine[r.emoji] = true; }
+      lg.log.push({ id: e.id, day: Math.max(0, Math.floor((Date.parse(e.created_at) - startMs) / 864e5)), kind: 'chat', member: e.user_id, text: e.body, reacts, mine, t: Date.parse(e.created_at) });
+    }
+    lg.log.sort((x, y) => x.t - y.t);
+    for (const p of data.punishments || []) {
+      const pv = (data.punishmentVotes || []).filter(v => v.punishment_id === p.id);
+      const yes = pv.filter(v => v.yes).length;
+      lg.custom.push({ id: p.id, text: p.text, tier: p.tier, by: p.proposed_by, yes, no: pv.length - yes,
+        approved: yes > members.length / 2, myVote: (pv.find(v => v.voter_id === me) || {}).yes });
+    }
+    lg.custom = lg.custom.filter(c => c.approved || c.yes + c.no < members.length).map(c => c);
+    return lg;
+  }
+
+  // Approved custom punishments only (pending ones show up for voting but don't enter the wheel).
+  function cloudPool(lg, tier) {
+    const t = tier || lg.tier;
+    return PUNISHMENTS[t].items.concat(lg.custom.filter(c => c.tier === t && c.approved).map(c => c.text));
+  }
+  function screenPunishment(text) {
+    text = String(text || '').trim();
+    if (text.length < 4) return 'Describe the punishment.';
+    if (text.length > 120) return 'Keep it under 120 characters.';
+    if (BANNED.test(text)) return 'Punishments stay safe, legal and inside the group.';
+    const money = text.match(MONEY);
+    if (money && Number(money[1]) > MONEY_CAP) return `Nothing over $${MONEY_CAP}.`;
+    return null;
+  }
+
   return {
     SCORING, PUNISHMENTS, TIER_ORDER, BOTS, MAX_HABITS, MONEY_CAP,
     create, roundRobin, prove, endDay, sus, react, points, matchup, standings, pool, addCustom, finish, veto, markServed,
+    fromCloud, susVerdict, cloudPool, screenPunishment,
     member, weekOf, streakBefore
   };
 });

@@ -32,6 +32,8 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 | `js/feedback.js` | Gibb supportive-vs-defensive language helper (from the Checkpoint prototype). Not wired into the Vault UI yet; intended for partner messages in Phase 1. |
 | `js/content.js` | Learn content, prompts, decay destinations. |
 | `js/league.js` | League demo rules (fantasy-style habit league vs 5 bot friends): round-robin matchups, scoring (+10 proof, +2/day streak capped at +10, −5 miss, −20 voted fake), sus votes, punishment tiers + vetted custom ones, finale + one veto. Pure, takes `rand`. Stored under localStorage `vault.league.demo.v1`; never touches credits. UI lives in app.js (`league()`). Tests in `tests/league.test.js`. |
+| `js/cloud.js` | Real leagues via Supabase (project `yqkzpiobjjvgxakggjee`). Guest (anonymous) sign-in + name, create/join by invite code (`#join=CODE`), proofs with photos (private `proofs` bucket), sus votes, reactions, chat, punishment votes, realtime feed. The publishable key in this file is public by design; Row Level Security in `supabase/leagues.sql` does the protecting. `League.fromCloud` turns rows into scores (misses are derived, no cron). |
+| `supabase/leagues.sql` | Database schema + RLS + RPCs (create/join/start league, set_result/use_veto/mark_served). Helpers live in the `private` schema. Apply changes through the Supabase connector, then copy them here. |
 | `sw.js` + `manifest.webmanifest` | Installable app + offline. Network-first service worker; bump `VERSION` there together with the `?v=` tags in index.html. Manifest shortcut "Prove it now" → `#prove`. |
 | `tests/core.test.js` | 22 tests incl. a 300-step random fuzz on the money invariant. |
 
@@ -42,6 +44,7 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 - `Core.tick` is idempotent.
 - Grace: 1 token per 3 consecutive wins, max 3 held; `extendBet` adds 24h once per bet and costs a token.
 - Live challenges: photo proof starts with `Core.drawChallenge` (random text from `Content.pickChallenge`, matched to the bet title's category). The photo's `shotAt` must fall inside the 2-minute window (`RULES.CHALLENGE_WINDOW_MS`). Redrawing restarts the window; reopening the sheet keeps the live one (no rerolling for an easy one). Core only checks the window when a challenge exists; the UI always draws one first.
+- Leagues: voiding a proof by sus vote needs a majority of the other players AND at least 2 votes (so a 2-player league can't be griefed). Odd player counts: the bye player plays the week's average.
 - Rank (`Core.rank`) is cosmetic only: points = bets won + entries fully earned back. It never touches credits.
 
 ## Conventions
