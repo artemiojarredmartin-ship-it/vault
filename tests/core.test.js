@@ -312,3 +312,18 @@ test('honor bets cannot draw challenges', () => {
   const b = bet(s, { proofTier: 0, stake: 5 }, T0);
   assert.throws(() => Core.drawChallenge(s, 'bet', b.id, 'x', T0), /Honor/);
 });
+
+test('simple mode: a missed bet just loses its chips, no vault entry', () => {
+  const s = fresh(); s.settings.simple = true;
+  const b = bet(s, { stake: 10 }, T0);
+  const ev = Core.tick(s, T0 + 25 * HOUR);
+  assert.equal(ev[0].type, 'lost');
+  assert.equal(s.bets[0].status, 'lost');
+  assert.equal(s.vault.length, 0);
+  assert.equal(Core.balances(s).wallet, RULES.STARTING_CREDITS - 10);
+  assert.equal(Core.balances(s).lost, 10);
+  assert.equal(Core.stats(s).lost, 1);
+  Core.tick(s, T0 + 30 * HOUR); // idempotent
+  ok(s);
+  assert.ok(b);
+});

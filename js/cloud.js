@@ -51,8 +51,9 @@
     return profile;
   }
 
-  const habitsJson = (titles) => titles.map(t => String(t || '').trim()).filter(Boolean).slice(0, 3)
-    .map((title, i) => ({ id: 'h' + i + '_' + Math.random().toString(36).slice(2, 7), title: title.slice(0, 60) }));
+  // habits: [{ title, chips }] — chips must add up to 10 (checked again on the server)
+  const habitsJson = (list) => list.filter(h => h && String(h.title || '').trim()).slice(0, 3)
+    .map((h, i) => ({ id: 'h' + i + '_' + Math.random().toString(36).slice(2, 7), title: String(h.title).trim().slice(0, 60), chips: Math.max(1, Math.round(Number(h.chips) || 0)) }));
   const tz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'; } catch (e) { return 'America/New_York'; } };
 
   async function createLeague({ name, tier, weeks, habits }) {
@@ -74,11 +75,12 @@
   // Everything needed to render one league.
   async function load(id) {
     const c = client();
-    const [league, members, entries, punishments] = await Promise.all([
+    const [league, members, entries, punishments, cvotes] = await Promise.all([
       c.from('leagues').select('*').eq('id', id).single(),
       c.from('members').select('user_id, habits, joined_at').eq('league_id', id),
       c.from('entries').select('*').eq('league_id', id).order('created_at', { ascending: true }).limit(2000),
-      c.from('punishments').select('*').eq('league_id', id)
+      c.from('punishments').select('*').eq('league_id', id),
+      c.from('consequence_votes').select('user_id, choice, created_at').eq('league_id', id).order('created_at', { ascending: true })
     ]);
     const g = check(league), ms = check(members), es = check(entries), ps = check(punishments);
     const ids = es.map(e => e.id), uids = ms.map(m => m.user_id), pids = ps.map(p => p.id);
@@ -91,7 +93,7 @@
     const prof = {}; for (const p of check(profiles)) prof[p.id] = p;
     return {
       league: g, members: ms.map(m => Object.assign({}, m, { profile: prof[m.user_id] })),
-      entries: es, votes: check(votes), reactions: check(reactions), punishments: ps, punishmentVotes: check(pvotes)
+      entries: es, votes: check(votes), reactions: check(reactions), punishments: ps, punishmentVotes: check(pvotes), consequenceVotes: check(cvotes)
     };
   }
 
@@ -137,6 +139,9 @@
     check(await client().from('punishment_votes').insert({ punishment_id: p.id, yes: true }));
     return p;
   }
+  async function voteConsequence(league, choice) {
+    check(await client().from('consequence_votes').upsert({ league_id: league, user_id: user.id, choice: String(choice).trim().slice(0, 120) }));
+  }
   async function votePunishment(id, yes) { check(await client().from('punishment_votes').insert({ punishment_id: id, yes })); }
   async function setResult(league, result) { return check(await client().rpc('set_result', { p_league: league, p_result: result })); }
   async function veto(league, punishment, tier) { return check(await client().rpc('use_veto', { p_league: league, p_punishment: punishment, p_tier: tier })); }
@@ -159,6 +164,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'leagues', filter: 'id=eq.' + league }, bump)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sus_votes' }, bump)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, bump)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'consequence_votes', filter: 'league_id=eq.' + league }, bump)
       .subscribe();
   }
   function unsubscribe() { if (channel) { client().removeChannel(channel); channel = null; } }
@@ -166,6 +172,6 @@
   global.Cloud = {
     available, restore, signUp, rename, me: () => user, profile: () => profile,
     createLeague, preview, joinLeague, startLeague, myLeagues, leaveLeague, load, today,
-    postProof, postChat, vote, react, suggest, votePunishment, setResult, veto, served, photoUrls, subscribe, unsubscribe
+    postProof, postChat, vote, react, suggest, votePunishment, voteConsequence, setResult, veto, served, photoUrls, subscribe, unsubscribe
   };
 })(window);

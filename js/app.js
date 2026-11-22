@@ -19,7 +19,7 @@
 
   const app = document.getElementById('app');
   const sheetRoot = document.getElementById('sheet-root');
-  const TABS = ['today', 'prove', 'bets', 'league', 'vault', 'ledger', 'learn', 'settings'];
+  const TABS = ['league', 'today', 'prove', 'bets', 'vault', 'ledger', 'learn', 'settings'];
 
   // ---------- time (supports the testing "time machine") ----------
   function now() { return Date.now() + (state.settings.clockOffset || 0); }
@@ -95,7 +95,7 @@
 
   // ---------- chips ----------
   function chipIco(cls = 'chip-ico') {
-    return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#c99a3a"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="#fff3cf" stroke-width="2.8" stroke-dasharray="3.77 3.77"/><circle cx="12" cy="12" r="6.6" fill="#e3bb60" stroke="#8a6416" stroke-width=".8"/><circle cx="12" cy="12" r="3.4" fill="none" stroke="#fff3cf" stroke-width="1.1"/></svg>`;
+    return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#1c1e22" stroke="#4a4f56" stroke-width=".6"/><circle cx="12" cy="12" r="9.6" fill="none" stroke="#c9ced5" stroke-width="2.6" stroke-dasharray="2.5 5.04"/><circle cx="12" cy="12" r="6.4" fill="#26292e" stroke="#8e949c" stroke-width=".7"/><circle cx="12" cy="12" r="3.3" fill="none" stroke="#c9ced5" stroke-width=".9"/></svg>`;
   }
   function amt(n, small) { return `<span class="amt${small ? ' small' : ''}">${chipIco()}${fmtCredits(n)}</span>`; }
   function chipstack(n, color) {
@@ -180,9 +180,10 @@
     for (const ev of events) {
       if (ev.type === 'locked') {
         if (!shown) { payout({ kind: 'lock', kicker: 'Locked, not lost', amount: ev.bet.stake, sub: `"${ev.bet.title}" missed. ${RULES.CHANCES} chances to earn it back.` }); Sfx.lock(); shown = true; }
-        else toast(`"${ev.bet.title}" missed. ${ev.bet.stake} credits are in the Vault, not gone.`, 'lock');
+        else toast(`"${ev.bet.title}" missed. ${ev.bet.stake} chips are in the Vault, not gone.`, 'lock');
       }
-      if (ev.type === 'decayed') toast(`${fmtCredits(ev.entry.amount)} credits went to ${ev.entry.destination}.`, 'lock');
+      if (ev.type === 'lost') { toast(`"${ev.bet.title}" missed. ${ev.bet.stake} chips lost.`, 'lock'); Sfx.lock(); }
+      if (ev.type === 'decayed') toast(`${fmtCredits(ev.entry.amount)} chips went to ${ev.entry.destination}.`, 'lock');
     }
   }
 
@@ -213,6 +214,9 @@
   function render() {
     Core.tick(state, now());
     const views = { today, prove, bets, league, vault, ledger, learn, settings };
+    const onboarding = !state.settings.onboarded && !cloud.joinCode;
+    document.body.classList.toggle('onboarding', onboarding);
+    if (onboarding) { app.innerHTML = welcome(); sheetRoot.innerHTML = ''; afterRender(); return; }
     if (ui.tab !== 'league' && cloud.current) { Cloud.unsubscribe(); cloud.current = null; cloud.data = null; }
     app.innerHTML = views[ui.tab]();
     sheetRoot.innerHTML = ui.sheet ? sheet() : '';
@@ -230,9 +234,9 @@
     const slot = (cls, key, v, label, color) => `<div class="slot ${cls}">${chipstack(v, color)}
       <div class="num" data-count="${v}" data-count-key="${key}">${fmtCredits(v)}</div><div class="label">${label}</div></div>`;
     return `<div class="felt"><div class="balances">
-      ${slot('wallet', 'wallet', b.wallet, 'Wallet', '#c99a3a')}
-      ${slot('stake', 'stake', b.atStake, 'On the table', '#2f5fc9')}
-      ${slot('vault', 'vault', b.inVault, 'In the Vault', '#c2413b')}
+      ${slot('wallet', 'wallet', b.wallet, 'Wallet', '#c9ced5')}
+      ${slot('stake', 'stake', b.atStake, 'On the table', '#5a6068')}
+      ${slot('vault', 'vault', b.inVault, 'In the Vault', '#b89b6a')}
     </div>${extra}</div>`;
   }
 
@@ -301,7 +305,7 @@
         <div class="row mt"><button class="primary" data-action="open-prove-redemption" data-id="${red.id}">Prove it</button></div>
       </div>` : ''}
       ${canRedeem ? `<div class="row mt"><button class="primary" data-action="open-redeem" data-id="${e.id}">Earn it back</button></div>` : ''}
-      ${e.status === 'locked' && e.chancesLeft === 0 && !red ? `<p class="small muted mt">No chances left. ${fmtCredits(e.amount)} credits go to ${esc(e.destination)} when the timer ends.</p>` : ''}
+      ${e.status === 'locked' && e.chancesLeft === 0 && !red ? `<p class="small muted mt">No chances left. ${fmtCredits(e.amount)} chips go to ${esc(e.destination)} when the timer ends.</p>` : ''}
       ${full ? `
         ${past.length ? `<details class="mt"><summary>${past.length} past attempt${past.length === 1 ? '' : 's'}</summary>
           ${past.map(r => `<div class="small mt"><span class="pill ${r.status === 'succeeded' ? 'done' : r.status === 'partial' ? 'partial' : 'missed'}">${r.status}</span> ${esc(r.title)} · ${esc(measureText(r.measure))}${r.unlocked ? ` · unlocked ${fmtCredits(r.unlocked)}` : ''}</div>`).join('')}
@@ -310,6 +314,76 @@
           <textarea data-action="wgitw" data-id="${e.id}" rows="2" placeholder="e.g. Practice ran late and I didn't have a shorter version planned.">${esc(e.whatGotInTheWay)}</textarea>
         </label>` : ''}
     </div>`;
+  }
+
+  // ---------- hero (pure CSS 3D chips) ----------
+  function heroHtml(cta, alt) {
+    const chip3 = (top) => `<div class="c3" style="top:${top}px"><div class="bot"></div><div class="side"></div><div class="top"></div></div>`;
+    const layers = Array.from({ length: 9 }, (_, i) => `<div class="hc-layer" style="transform:translateZ(${-(i + 1) * 1.6}px)"></div>`).join('');
+    const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+    const card = (d, icon, title, text) => `<div class="glass anim" style="--d:${d}s">${ico(icon)}<strong>${title}</strong><span>${text}</span></div>`;
+    return `<section class="hero-card" aria-label="Vault">
+      <div class="hero-copy">
+        <div class="eyebrow anim" style="--d:.4s">Fantasy football for your habits</div>
+        <h1 class="hero-title anim" style="--d:.5s">Bet on your habits.<br>Don’t finish last.</h1>
+        <p class="hero-sub anim" style="--d:.62s">Start a league with friends, put chips on the habits you want to stick to, and prove it every day. Fewest chips at the end does the consequence you all agreed on.</p>
+        <div class="anim" style="--d:.74s"><button class="hero-cta" ${cta}>Start a league</button>${alt || ''}</div>
+        <p class="no-money anim" style="--d:.86s">Chips only. No real money. Ever.</p>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="spot"></div>
+        <div class="chipstack3d">${chip3(54)}${chip3(36)}${chip3(18)}${chip3(0)}</div>
+        <div class="hc-drop"><div class="hc-bob"><div class="hc-tilt"><div class="hc-spin">${layers}<div class="hc-face"></div><div class="hc-shine"></div></div></div></div></div>
+      </div>
+      <div class="hero-cards">
+        ${card(1.0, '<path d="M8 11V6a4 4 0 0 1 8 0v5"/><rect x="5" y="11" width="14" height="10" rx="2"/>', 'Agree on the stakes', 'Your group votes on the loser’s consequence before day one.')}
+        ${card(1.15, '<ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 7v4c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 11v4c0 1.7 3.6 3 8 3s8-1.3 8-3v-4"/>', 'Bet your chips', '10 chips a day across your habits. Miss one, lose its chips.')}
+        ${card(1.3, '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', 'Prove it daily', 'A live photo challenge each day. Friends can call sus.')}
+      </div>
+    </section>`;
+  }
+
+  // ---------- setup flow (new users) ----------
+  const ob = { step: 0, name: '', goals: [], mode: null, level: null };
+  function myIdeas() { const p = state.settings.profile || {}; return Content.suggestionsFor(p.goals || [], p.level || 'steady'); }
+  function welcome() {
+    const steps = 5, dots = Array.from({ length: steps }, (_, i) => `<i class="${i <= ob.step ? 'on' : ''}"></i>`).join('');
+    const top = `<div class="ob-top"><div class="ob-dots" aria-hidden="true">${dots}</div>${ob.step ? '<button class="ghost sm" data-action="ob-back">Back</button>' : '<span></span>'}</div>`;
+    const opt = (action, value, label, sub, on) => `<button class="ob-opt ${on ? 'on' : ''}" data-action="${action}" data-v="${value}"><strong>${label}</strong>${sub ? `<span>${sub}</span>` : ''}</button>`;
+    let body = '';
+    if (ob.step === 0) body = `<div class="eyebrow">Welcome to Vault</div><h1 class="ob-q">What should we call you?</h1>
+      <form data-form="ob-name" class="ob-form"><input name="name" maxlength="30" autocomplete="given-name" placeholder="Your first name" value="${esc(ob.name || state.settings.name || '')}" required>
+      <button class="primary big-cta" type="submit">Continue</button></form>`;
+    else if (ob.step === 1) body = `<div class="eyebrow">Hey ${esc(ob.name)}</div><h1 class="ob-q">What do you want to get better at?</h1><p class="muted">Pick up to 3.</p>
+      <div class="ob-grid">${Content.GOALS.map(g => opt('ob-goal', g.id, g.label, '', ob.goals.includes(g.id))).join('')}</div>
+      <button class="primary big-cta" data-action="ob-next" ${ob.goals.length ? '' : 'disabled'}>Continue</button>`;
+    else if (ob.step === 2) body = `<div class="eyebrow">Your style</div><h1 class="ob-q">How do you want to play?</h1>
+      <div class="ob-list">${opt('ob-mode', 'friends', 'With friends', 'A league. Weekly matchups. Fewest chips does the consequence.', ob.mode === 'friends')}
+        ${opt('ob-mode', 'solo', 'Solo', 'Just me. Bet chips on myself and keep my streak.', ob.mode === 'solo')}
+        ${opt('ob-mode', 'both', 'Both', 'A league with friends, plus my own solo bets.', ob.mode === 'both')}</div>`;
+    else if (ob.step === 3) body = `<div class="eyebrow">Intensity</div><h1 class="ob-q">How hard should it hit?</h1>
+      <div class="ob-list">${Content.LEVELS.map(l => opt('ob-level', l.id, l.label, l.sub, ob.level === l.id)).join('')}</div>`;
+    else {
+      const ideas = Content.suggestionsFor(ob.goals, ob.level).slice(0, Math.min(3, ob.goals.length + 1));
+      body = `<div class="eyebrow">Your plan</div><h1 class="ob-q">Here's where you start, ${esc(ob.name)}.</h1>
+        <div class="ob-plan">${ideas.map((h, i) => `<div class="ob-habit anim" style="--d:${0.1 + i * 0.12}s"><span>${esc(h)}</span><span class="chips-tag">daily</span></div>`).join('')}</div>
+        <p class="muted small">You can change these anytime. ${ob.mode === 'solo' ? 'Bet chips on yourself and prove it before the deadline.' : 'Your league splits 10 chips a day across habits like these.'}</p>
+        <button class="primary big-cta" data-action="ob-finish">${ob.mode === 'solo' ? 'Place my first bet' : 'Start my league'}</button>
+        <p class="no-money">Chips only. No real money. Ever.</p>`;
+    }
+    return `<section class="ob" aria-live="polite">${top}<div class="ob-body anim" style="--d:0s" key="${ob.step}">${body}</div>
+      <button class="ob-skip" data-action="ob-skip">Skip setup</button></section>`;
+  }
+  function finishSetup(skip) {
+    state.settings.onboarded = true;
+    if (!skip) {
+      state.settings.profile = { goals: ob.goals.slice(), mode: ob.mode || 'friends', level: ob.level || 'steady' };
+      if (ob.name) state.settings.name = ob.name;
+    }
+    Storage.save(state);
+    const mode = (state.settings.profile || {}).mode;
+    if (!skip && mode === 'solo') { ui.prefillBet = myIdeas()[0]; setTab('bets'); } else setTab('league');
+    window.scrollTo({ top: 0 });
   }
 
   // ---------- views ----------
@@ -325,19 +399,10 @@
     const promptCard = `<div class="card soft mt prompt-card"><span class="suit" aria-hidden="true">♦</span><div><div class="eyebrow">Today's prompt</div><p class="mb0">${esc(todaysPrompt())}</p></div></div>`;
 
     if (!state.bets.length) {
-      return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">You have ${fmtCredits(state.wallet.credits)} credits. Bet on yourself.</p></div></div>
-        <div class="felt intro">
-          <div class="eyebrow" style="color:var(--gold-hi)">House rules</div>
-          <h2>The only bet where the house never wins</h2>
-          <div class="deal">
-            <div class="play-card"><span class="idx">1♠</span><strong>Place a bet</strong><p>A goal, a stake, an honest deadline.</p></div>
-            <div class="play-card"><span class="idx red">2♦</span><strong>Prove it</strong><p>Before the deadline. Keep every credit.</p></div>
-            <div class="play-card"><span class="idx">3♣</span><strong>Miss it?</strong><p>Locked in your Vault, not lost. Three chances to win it back with something harder.</p></div>
-          </div>
-          <button class="primary big-cta" data-action="nav" data-tab="bets">Place your first bet</button>
-          <div class="row mt" style="justify-content:center"><button class="ghost" data-action="sample">Or load sample data to look around</button></div>
-          <p class="small muted mb0 mt">Play credits only. We never keep your money, now or later.</p>
-        </div>
+      return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">${fmtCredits(state.wallet.credits)} chips. Bet on yourself.</p></div></div>
+        <div class="card solo-intro"><h2>Solo mode</h2>
+          <p class="muted">Bet chips on yourself. Prove it before the deadline and keep them. Miss it and they're gone.</p>
+          <div class="row"><button class="primary" data-action="nav" data-tab="bets">Place a bet</button><button class="ghost" data-action="nav" data-tab="league">Play with friends instead</button></div></div>
         ${promptCard}`;
     }
 
@@ -347,6 +412,7 @@
     return `<div class="page-head"><div><h1>${greet}</h1><p class="muted">${esc(new Date(t).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))}</p></div>
         <button class="primary" data-action="nav" data-tab="bets">New bet</button></div>
       ${balancesBlock(rankBar())}
+      ${state.wallet.credits < 5 && !active.length ? `<div class="card mt row spread"><span>Out of chips. They're free, so start fresh.</span><button class="primary sm" data-action="refill">Refill to 100</button></div>` : ''}
       <div class="scoreboard">
         ${score('Win rate', st.winRate == null ? '—' : st.winRate + '%')}
         ${score(st.streak >= 3 ? 'Hot streak' : 'Streak', st.streak >= 3 ? '×' + st.streak : st.streak, st.streak >= 3)}
@@ -357,8 +423,8 @@
       ${ui.away.length ? `<div class="card mt" style="border-color:var(--partial)">
         <div class="row spread"><h2 class="mb0">While you were away</h2><button class="sm ghost" data-action="dismiss-away">Dismiss</button></div>
         ${ui.away.map(a => a.type === 'locked'
-          ? `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" missed. <strong>${fmtCredits(a.amount)}</strong> credits are in the Vault, not gone. ${a.chances} chances to earn them back.</p>`
-          : `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" decayed. ${fmtCredits(a.amount)} credits went to ${esc(a.destination)}.</p>`).join('')}
+          ? `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" missed. <strong>${fmtCredits(a.amount)}</strong> chips are in the Vault, not gone. ${a.chances} chances to earn them back.</p>`
+          : `<p class="mb0 mt">"<strong>${esc(a.title)}</strong>" decayed. ${fmtCredits(a.amount)} chips went to ${esc(a.destination)}.</p>`).join('')}
         ${ui.away.some(a => a.type === 'locked') ? `<div class="row mt"><button class="primary" data-action="nav" data-tab="vault">Earn it back</button></div>` : ''}
       </div>` : ''}
       <div class="section-title"><h2>On the table</h2><span class="count-badge">${active.length}</span></div>
@@ -370,6 +436,7 @@
       ${promptCard}`;
   }
 
+  function clearPrefill() { ui.prefillBet = null; }
   function prove() {
     const due = dueItems();
     if (!due.length) {
@@ -398,7 +465,7 @@
         <h2>Place a bet</h2>
         <div class="quick" style="margin-bottom:.75rem">${Content.TEMPLATES.map((tpl, i) => `<button type="button" class="sm" data-action="template" data-i="${i}">${esc(tpl.label)}</button>`).join('')}</div>
         <form data-form="bet">
-          <label>What will you do? <input name="title" required maxlength="120" placeholder="e.g. Run 5 km" autocomplete="off"></label>
+          <label>What will you do? <input name="title" required maxlength="120" placeholder="e.g. Run 5 km" autocomplete="off" value="${esc(ui.prefillBet || '')}"></label>
           <label>Proof
             <select name="proofTier" data-action="tier-change">
               <option value="0">Honor · max ${RULES.MAX_STAKE_BY_TIER[0]}</option>
@@ -410,7 +477,7 @@
             <label for="bet-stake">Stake <span class="hint" id="stake-hint">max ${RULES.MAX_STAKE_BY_TIER[defaultTier]} for this proof · tap chips to add</span></label>
             <div class="stake-input-wrap">${chipIco()}<input id="bet-stake" name="stake" type="number" min="1" step="1" required value="10" inputmode="numeric"></div>
             <div class="chip-row">
-              ${[1, 5, 10, 25].map(v => `<button type="button" class="chip-btn c${v}" data-action="add-chip" data-v="${v}" aria-label="Add ${v} credits">${v}</button>`).join('')}
+              ${[1, 5, 10, 25].map(v => `<button type="button" class="chip-btn c${v}" data-action="add-chip" data-v="${v}" aria-label="Add ${v} chips">${v}</button>`).join('')}
               <button type="button" class="sm ghost" data-action="clear-chips">Clear</button>
             </div>
           </div>
@@ -435,7 +502,7 @@
                   <div class="row" style="flex-wrap:nowrap"><input name="measureAmount" type="number" min="0.1" step="any" placeholder="5" style="max-width:40%"><input name="measureUnit" placeholder="km / pages / minutes"></div></label>
               </div>
               <label>Why it matters <input name="why" maxlength="200" placeholder="Shown on hard days."></label>
-              <label>If it decays, credits go to
+              <label>If it decays, chips go to
                 <select name="destination">${Content.DESTINATIONS.map(d => `<option>${esc(d)}</option>`).join('')}</select></label>
             </div>
           </details>
@@ -539,6 +606,7 @@
         <div class="card"><h2>Profile</h2>
           <form data-form="settings"><label>Your name <input name="name" maxlength="60" value="${esc(state.settings.name)}" placeholder="e.g. Sam"></label>
           <div><button class="primary" type="submit">Save</button></div></form></div>
+        <div class="card row spread"><div><h2 class="mb0">Your setup</h2><p class="small muted mb0">Goals, play style and intensity shape your suggestions.</p></div><button class="sm" data-action="redo-setup">Redo setup</button></div>
         <div class="card"><h2>Sound</h2>
           <label class="toggle-row"><span>Chip sounds and win chimes <span class="hint">quiet, and only after you tap something</span></span>
             <input type="checkbox" data-action="sound-toggle" ${state.settings.sound !== false ? 'checked' : ''}></label></div>
@@ -570,7 +638,7 @@
   }
 
   // ---------- League (demo) ----------
-  // Rules live in js/league.js. This demo keeps its own storage key and never touches credits.
+  // Rules live in js/league.js. This demo keeps its own storage key and never touches chips.
   const LKEY = 'vault.league.demo.v1';
   let lg = (() => { try { return JSON.parse(localStorage.getItem(LKEY)) || null; } catch (e) { return null; } })();
   function saveLeague() { try { if (lg) localStorage.setItem(LKEY, JSON.stringify(lg)); else localStorage.removeItem(LKEY); } catch (e) { /* private mode */ } }
@@ -600,7 +668,7 @@
         <div class="mu-status">${diff > 0 ? `You're up by ${diff}` : diff < 0 ? `${esc(opp.name)} is up by ${-diff}` : 'Dead even'}</div>
       </div>
       ${lg.finished ? '' : `<div class="card mt">
-        <div class="row spread"><h3 class="mb0">Your habits today</h3><span class="small muted">+10 each · streaks add +2/day</span></div>
+        <div class="row spread"><h3 class="mb0">Your habits today</h3><span class="small muted">prove it to keep your chips</span></div>
         <div class="lg-habits">${you.habits.map(h => {
           const done = lg.log.find(e => e.day === lg.day && e.member === 'you' && e.habit === h.id && (e.kind === 'proof' || e.kind === 'fake'));
           const streak = League.streakBefore(lg, 'you', h.id, lg.day);
@@ -615,7 +683,7 @@
         <p class="hint mb0">Demo: your friends are bots. In the real app, Prove it opens the live challenge camera and days end on their own. Sim buttons auto-play you about 75% of the time.</p>
       </div>`}
 
-      <div class="section-title"><h2>Standings</h2><span class="small muted">last place spins</span></div>
+      <div class="section-title"><h2>Standings</h2><span class="small muted">fewest chips does it</span></div>
       <div class="card ledger-card"><table class="ledger standings">
         <thead><tr><th>#</th><th>Player</th><th>W–L${table.some(r => r.t) ? '–T' : ''}</th><th class="n">Pts</th></tr></thead>
         <tbody>${table.map((r, i) => `<tr class="${r.id === 'you' ? 'me' : ''} ${i === table.length - 1 ? 'zone' : ''}">
@@ -707,7 +775,7 @@
             <label>Your habit 2 <input name="h2" value="Read 20 pages" maxlength="60"></label>
           </div>
           <label>Season length <select name="weeks"><option value="2">2 weeks</option><option value="3" selected>3 weeks</option><option value="4">4 weeks</option></select></label>
-          <fieldset class="tier-pick"><legend>Punishment level</legend>
+          <fieldset class="tier-pick"><legend>Consequence vibe</legend>
             ${League.TIER_ORDER.map(t => `<label class="tier-opt"><input type="radio" name="tier" value="${t}" ${t === 'medium' ? 'checked' : ''}>
               <span><strong>${League.PUNISHMENTS[t].label}</strong><small>${esc(League.PUNISHMENTS[t].items[0])}</small><small>${esc(League.PUNISHMENTS[t].items[1])}</small></span></label>`).join('')}
           </fieldset>
@@ -754,10 +822,42 @@
   // ---------- Real leagues (Supabase) ----------
   const cloud = { ready: false, booting: false, leagues: null, current: null, data: null, photos: {}, joinCode: null, preview: null, previewErr: null, busy: false };
   const me = () => (Cloud.me() || {}).id;
-  const habitInputs = (a = 'Up by 7am', b = '') => `<div class="form-row">
-      <label>Your habit 1 <input name="h1" value="${esc(a)}" maxlength="60" required placeholder="e.g. Up by 7am"></label>
-      <label>Your habit 2 <span class="hint">optional</span><input name="h2" value="${esc(b)}" maxlength="60" placeholder="e.g. Read 20 pages"></label></div>`;
-  const tierPicker = (sel = 'medium') => `<fieldset class="tier-pick"><legend>Punishment level</legend>
+  const GOAL_IDEAS = ['Up by 7am', 'Gym 45 min', '8k steps', 'Read 20 pages', 'Study 1 hour', 'No phone after 11pm', 'Drink 2L water', 'In bed by 11', 'Practice 30 min'];
+  // Goal helper: up to 3 habits, 10 chips a day split across them.
+  const habitInputs = () => {
+    const mine = myIdeas(), p = state.settings.profile;
+    const first = p ? mine.slice(0, Math.min(2, (p.goals || []).length || 1)) : ['Up by 7am'];
+    const split = League.splitChips(first.length);
+    const row = (i, title, chips) => `<div class="goal-row"><input name="t${i}" value="${esc(title)}" maxlength="60" placeholder="${i === 1 ? 'e.g. Up by 7am' : 'Add another (optional)'}" ${i === 1 ? 'required' : ''}>
+      <label class="chip-step"><input name="c${i}" type="number" min="${i === 1 ? 1 : 0}" max="10" value="${chips}" inputmode="numeric" aria-label="Chips on habit ${i}"><span>chips</span></label></div>`;
+    return `<div class="goal-helper">
+      <div class="label-like">Your habits <span class="hint">specific and provable with a photo · 10 chips a day split across them</span></div>
+      ${row(1, first[0], split[0])}${row(2, first[1] || '', split[1] || 0)}${row(3, '', 0)}
+      <div class="idea-row">${(p ? mine.slice(0, 9) : GOAL_IDEAS).map(g => `<button type="button" class="idea" data-action="goal-idea" data-g="${esc(g)}">${esc(g)}</button>`).join('')}</div>
+      <div class="chip-total small muted" data-chip-total>10 of 10 chips placed</div>
+    </div>`;
+  };
+  function readHabits(f) {
+    const list = [1, 2, 3].map(i => ({ title: (f['t' + i] || '').trim(), chips: Number(f['c' + i]) || 0 })).filter(h => h.title);
+    if (!list.length) throw new Error('Add at least one habit.');
+    if (list.some(h => h.chips < 1)) throw new Error('Put at least 1 chip on every habit.');
+    const sum = list.reduce((n, h) => n + h.chips, 0);
+    if (sum !== 10) throw new Error(`Your chips add up to ${sum}. Split exactly 10.`);
+    return list;
+  }
+  function rebalance(form) {
+    const rows = [1, 2, 3].filter(i => form.elements['t' + i].value.trim());
+    const split = League.splitChips(rows.length || 1);
+    [1, 2, 3].forEach(i => { form.elements['c' + i].value = 0; });
+    rows.forEach((i, k) => { form.elements['c' + i].value = split[k]; });
+    updateChipTotal(form);
+  }
+  function updateChipTotal(form) {
+    const el = form.querySelector('[data-chip-total]'); if (!el) return;
+    const sum = [1, 2, 3].reduce((n, i) => n + (form.elements['t' + i].value.trim() ? Number(form.elements['c' + i].value) || 0 : 0), 0);
+    el.textContent = `${sum} of 10 chips placed`; el.classList.toggle('neg', sum !== 10);
+  }
+  const tierPicker = (sel = 'medium') => `<fieldset class="tier-pick"><legend>Consequence vibe</legend>
       ${League.TIER_ORDER.map(t => `<label class="tier-opt"><input type="radio" name="tier" value="${t}" ${t === sel ? 'checked' : ''}>
         <span><strong>${League.PUNISHMENTS[t].label}</strong><small>${esc(League.PUNISHMENTS[t].items[0])}</small><small>${esc(League.PUNISHMENTS[t].items[1])}</small></span></label>`).join('')}
     </fieldset>`;
@@ -817,23 +917,13 @@
   }
 
   function realSignup() {
-    return `<div class="page-head"><div><h1>League</h1><p class="muted">Fantasy-style habits with friends. Last place does the punishment.</p></div></div>
-      <div class="felt intro">
-        <div class="eyebrow" style="color:var(--gold-hi)">${cloud.joinCode ? 'You\'ve been invited' : 'Play with real friends'}</div>
-        <h2>Your friends. Your habits. One loser.</h2>
-        <div class="how-grid">
-          <div><b>1</b>Everyone picks daily habits</div>
-          <div><b>2</b>Face one friend each week</div>
-          <div><b>3</b>Prove it with a live photo, call sus on fakes</div>
-          <div><b>4</b>Last place spins the punishment wheel</div>
-        </div>
-      </div>
+    return `${heroHtml('data-action="hero-focus-name"')}
       <div class="card mt"><form data-form="cloud-signup">
         <label>Your name <span class="hint">what your friends will see</span><input name="name" maxlength="30" required autocomplete="nickname" placeholder="e.g. Jarred" value="${esc(state.settings.name || '')}"></label>
         <p class="small muted mb0">No email or password. Your spot is saved on this phone, so use the same phone and browser each time.</p>
         <button class="primary big-cta" type="submit">${cloud.joinCode ? 'Continue to the invite' : 'Let\'s go'}</button>
       </form></div>
-      <div class="row mt" style="justify-content:center"><button class="ghost" data-action="lg-mode" data-m="demo">Just try the demo (pretend friends)</button></div>`;
+      <div class="row mt" style="justify-content:center"><button class="ghost" data-action="nav" data-tab="today">Or just track habits solo</button></div>`;
   }
 
   function realJoin() {
@@ -842,11 +932,11 @@
         <button class="ghost sm" data-action="cl-cancel-join">Cancel</button></div>
       ${cloud.previewErr ? `<div class="card"><p class="mb0">${esc(cloud.previewErr)}</p></div>` : !p ? '<div class="card"><p class="mb0 muted">Looking up the league…</p></div>' : p.started ? `<div class="card"><p class="mb0">"${esc(p.name)}" already started. Ask them to invite you next season.</p></div>` : `
         <div class="felt intro"><div class="eyebrow" style="color:var(--gold-hi)">You're invited to</div><h2>${esc(p.name)}</h2>
-          <p class="muted mb0">${p.members} player${p.members === 1 ? '' : 's'} so far · ${p.weeks}-week season · ${League.PUNISHMENTS[p.tier].label} punishments</p></div>
-        <div class="card mt"><h3>The punishment list</h3><p class="small muted">Last place does one of these (or one the group votes in). You get one veto.</p>
+          <p class="muted mb0">${p.members} player${p.members === 1 ? '' : 's'} so far · ${p.weeks}-week season · ${League.PUNISHMENTS[p.tier].label} consequences</p></div>
+        <div class="card mt"><h3>How it works</h3><p class="small muted">You get 10 chips a day to split across your habits. Prove a habit and its chips are safe; miss it and they're gone. Fewest chips at the end does the consequence your group votes on in the lobby. Options include:</p>
           <ul class="small">${League.PUNISHMENTS[p.tier].items.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>
         <div class="card mt"><form data-form="cloud-join">${habitInputs()}
-          <p class="small muted mb0">Pick habits you can prove with a photo every day.</p>
+
           <button class="primary big-cta" type="submit">I'm in</button></form></div>`}`;
   }
 
@@ -864,11 +954,11 @@
           <label>League name <input name="name" value="The Grind House" maxlength="40" required></label>
           ${habitInputs()}
           <label>Season length <select name="weeks"><option value="1">1 week (quick test)</option><option value="2">2 weeks</option><option value="3" selected>3 weeks</option><option value="4">4 weeks</option></select></label>
-          ${tierPicker()}
-          <div class="card soft small"><strong>House rules.</strong> Everyone sees the punishment list before joining. Punishments stay inside the group. Each loser gets one veto. Nothing dangerous, illegal, sexual, public or over $${League.MONEY_CAP}.</div>
+          ${tierPicker((Content.LEVELS.find(l => l.id === (state.settings.profile || {}).level) || {}).tier || 'medium')}
+          <p class="small muted mb0">Your group votes on the exact consequence before day one. Nothing dangerous, illegal, public or over $${League.MONEY_CAP}. No real money, ever.</p>
           <button class="primary big-cta" type="submit">Create league &amp; get invite link</button>
         </form></div>
-      <div class="row mt" style="justify-content:center"><button class="ghost" data-action="lg-mode" data-m="demo">Try the demo with pretend friends</button></div>`;
+`;
   }
 
   function realLeague() {
@@ -882,7 +972,7 @@
     const tierLabel = League.PUNISHMENTS[v.tier].label;
     const punish = punishmentsCard(v, nameOf);
     const headerHtml = `<div class="page-head"><div><h1>${esc(v.name)}</h1>
-        <p class="muted">${!v.started ? 'Lobby' : v.finished ? 'Season over' : `Week ${Math.floor(v.day / 7) + 1} of ${v.weeks} · Day ${v.day % 7 + 1} of 7`} · ${tierLabel} punishments</p></div>${back}</div>`;
+        <p class="muted">${!v.started ? 'Lobby' : v.finished ? 'Season over' : `Week ${Math.floor(v.day / 7) + 1} of ${v.weeks} · Day ${v.day % 7 + 1} of 7`} · ${tierLabel} consequences</p></div>${back}</div>`;
 
     if (!v.started) {
       const url = inviteUrl(d.league.code);
@@ -893,11 +983,11 @@
           <div class="row" style="justify-content:center"><button class="primary" data-action="cl-share" data-url="${esc(url)}" data-name="${esc(v.name)}">Share invite link</button><button class="ghost" data-action="cl-copy" data-url="${esc(url)}">Copy link</button></div>
         </div>
         <div class="section-title"><h2>Players</h2><span class="count-badge">${v.members.length}</span></div>
-        <div class="card">${v.members.map(m => `<div class="lobby-row">${ava(m)}<div><strong>${nameOf(m.id)}</strong>${m.id === d.league.created_by ? ' <span class="pill">host</span>' : ''}<div class="small muted">${m.habits.map(h => esc(h.title)).join(' · ')}</div></div></div>`).join('')}</div>
-        ${isHost ? `<button class="primary big-cta mt" data-action="cl-start" ${v.members.length < 2 ? 'disabled' : ''}>${v.members.length < 2 ? 'Waiting for at least one friend…' : `Start the season (${v.members.length} players)`}</button>
-          <p class="hint">Day 1 is today. Once it starts, nobody else can join.</p>`
-        : `<div class="card soft mt"><p class="mb0">Waiting for the host to start the season.</p></div>`}
-        ${punish}
+        <div class="card">${v.members.map(m => `<div class="lobby-row">${ava(m)}<div><strong>${nameOf(m.id)}</strong>${m.id === d.league.created_by ? ' <span class="pill">host</span>' : ''}<div class="small muted">${m.habits.map(h => `${esc(h.title)} <span class="chips-tag">${h.chips || ''}</span>`).join(' · ')}</div></div></div>`).join('')}</div>
+        ${consequenceVote(v)}
+        ${(() => { const voted = v.votes.length >= v.members.length; return isHost ? `<button class="primary big-cta mt" data-action="cl-start" ${v.members.length < 2 || !voted ? 'disabled' : ''}>${v.members.length < 2 ? 'Waiting for at least one friend…' : !voted ? `Waiting on votes (${v.votes.length} of ${v.members.length})` : `Start the season (${v.members.length} players)`}</button>
+          <p class="hint">Day 1 is today. Once it starts, nobody else can join and the consequence is locked.</p>`
+        : `<div class="card soft mt"><p class="mb0">Waiting for the host to start the season.</p></div>`; })()}
         <div class="row mt"><button class="ghost sm danger" data-action="cl-leave">Leave league</button></div>`;
     }
 
@@ -912,7 +1002,7 @@
         <div class="vs"><div class="side">${ava(you, true)}<div class="who">You</div><div class="num" data-count="${mu.mine}" data-count-key="cmu-you">${mu.mine}</div></div>
           <div class="vs-mid">VS</div>
           <div class="side">${ava(opp, true)}<div class="who">${esc(opp.name)}</div><div class="num" data-count="${mu.theirs}" data-count-key="cmu-opp">${mu.theirs}</div></div></div>
-        <div class="mu-status">${diff > 0 ? `You're up by ${diff}` : diff < 0 ? `${esc(opp.name)} is up by ${-diff}` : 'Dead even'}</div></div>`;
+        <div class="mu-status">Chips lost this week · ${diff > 0 ? `you're ahead by ${diff}` : diff < 0 ? `${esc(opp.name)} is ahead by ${-diff}` : 'dead even'}</div></div>`;
     } else {
       const avg = Math.round(v.members.reduce((n, m) => n + League.points(v, m.id, wk), 0) / v.members.length);
       const mine = League.points(v, myId, wk);
@@ -922,29 +1012,43 @@
         <div class="mu-status">Odd number of players: beat the average to get the W.</div></div>`;
     }
     const today = v.finished ? '' : `<div class="card mt">
-        <div class="row spread"><h3 class="mb0">Your habits today</h3><span class="small muted">+10 each · streaks add +2/day</span></div>
+        <div class="row spread"><h3 class="mb0">Your habits today</h3><span class="small muted">prove it to keep your chips</span></div>
         <div class="lg-habits">${you.habits.map(h => {
           const done = v.log.find(e => e.day === v.day && e.member === myId && e.habit === h.id && (e.kind === 'proof' || e.kind === 'fake'));
           const prev = v.log.filter(e => e.member === myId && e.habit === h.id && e.day < v.day);
           let streak = 0; for (let i = prev.length - 1; i >= 0 && prev[i].kind === 'proof'; i--) streak++;
           return `<div class="lg-habit"><span class="t">${esc(h.title)}${streak ? ` <span class="streak-chip">🔥${streak}</span>` : ''}</span>
-            ${done ? `<span class="pill done">✓ +${done.points}</span>` : `<button class="primary sm" data-action="cl-prove" data-h="${esc(h.id)}" data-title="${esc(h.title)}" data-day="${v.day}">Prove it</button>`}</div>`;
+            <span class="chips-tag">${h.chips || ''} chips</span>
+            ${done ? `<span class="pill done">✓ safe</span>` : `<button class="primary sm" data-action="cl-prove" data-h="${esc(h.id)}" data-title="${esc(h.title)}" data-day="${v.day}">Prove it</button>`}</div>`;
         }).join('')}</div>
-        <p class="hint mb0">Proof only counts today. Miss a day and it's −5.</p></div>`;
+        <p class="hint mb0">Proof only counts today. Miss it and those chips are gone.</p></div>`;
 
-    return headerHtml + (v.finished ? realFinale(v, table, isHost, nameOf) : '') + board + today + `
-      <div class="section-title"><h2>Standings</h2><span class="small muted">last place spins</span></div>
+    const onLine = v.consequence ? `<div class="on-line"><span class="eyebrow">On the line</span><strong>${esc(v.consequence)}</strong><span class="small muted">Fewest chips at the end does it.</span></div>` : '';
+    return headerHtml + (v.finished ? realFinale(v, nameOf) : onLine) + board + today + `
+      <div class="section-title"><h2>Standings</h2><span class="small muted">fewest chips does it</span></div>
       <div class="card ledger-card"><table class="ledger standings">
-        <thead><tr><th>#</th><th>Player</th><th>W–L${table.some(r => r.t) ? '–T' : ''}</th><th class="n">Pts</th></tr></thead>
+        <thead><tr><th>#</th><th>Player</th><th>W–L${table.some(r => r.t) ? '–T' : ''}</th><th class="n">Chips</th></tr></thead>
         <tbody>${table.map((r, i) => `<tr class="${r.id === myId ? 'me' : ''} ${i === table.length - 1 && table.length > 1 ? 'zone' : ''}">
           <td>${i === 0 ? '🏆' : i === table.length - 1 ? '🔻' : i + 1}</td>
           <td><span class="who-cell">${ava(League.member(v, r.id))}${nameOf(r.id)}</span></td>
-          <td>${r.w}–${r.l}${table.some(x => x.t) ? '–' + r.t : ''}</td><td class="n">${r.pts}</td></tr>`).join('')}</tbody></table></div>
+          <td>${r.w}–${r.l}${table.some(x => x.t) ? '–' + r.t : ''}</td><td class="n">${League.chipsLeft(v, r.id)}</td></tr>`).join('')}</tbody></table></div>
       <div class="section-title"><h2>Group feed</h2><span class="small muted">live</span></div>
       <div class="card feed">
         <form data-form="cloud-chat" class="chat-form"><div class="row" style="flex-wrap:nowrap"><input name="body" maxlength="280" placeholder="Talk your trash…" autocomplete="off" required><button type="submit">Send</button></div></form>
-        ${realFeed(v, nameOf)}</div>
-      ${punish}`;
+        ${realFeed(v, nameOf)}</div>`;
+  }
+
+  function consequenceVote(v) {
+    const myId = me(), mine = (v.votes.find(x => x.user === myId) || {}).choice;
+    const tally = League.consequenceTally(v.votes);
+    const count = (c) => (tally.find(t => t.choice === c) || { n: 0 }).n;
+    const options = League.PUNISHMENTS[v.tier].items.concat(tally.map(t => t.choice)).filter((c, i, a) => a.indexOf(c) === i);
+    return `<div class="section-title"><h2>The consequence</h2><span class="count-badge">${v.votes.length} of ${v.members.length} voted</span></div>
+      <div class="card"><p class="small muted">Whoever ends with the fewest chips does this. Everyone votes; the top pick gets locked in when the season starts.</p>
+        <div class="cons-list">${options.map(c => `<button class="cons-opt ${mine === c ? 'on' : ''}" data-action="cl-vote-cons" data-c="${esc(c)}">
+          <span>${esc(c)}</span><span class="cons-n">${count(c) ? count(c) : ''}</span></button>`).join('')}</div>
+        <form data-form="cloud-cons" class="mt"><div class="row" style="flex-wrap:nowrap"><input name="text" maxlength="120" placeholder="Or propose your own…" required><button type="submit">Propose</button></div></form>
+      </div>`;
   }
 
   function realFeed(v, nameOf) {
@@ -966,12 +1070,12 @@
           ${url ? `<button class="proof-pic" data-action="cl-photo" data-src="${esc(url)}" aria-label="View proof photo"><img src="${esc(url)}" alt="Proof photo" loading="lazy"></button>` : e.photo ? '' : '<div class="small" style="color:var(--partial)">No photo (camera unavailable)</div>'}
           ${e.sus ? `<div class="small ${e.sus.verdict === 'fake' ? 'neg' : e.sus.verdict === 'legit' ? 'pos' : ''}">Sus vote ${e.sus.yes} fake – ${e.sus.no} legit · ${e.sus.verdict === 'fake' ? 'FAKE' : e.sus.verdict === 'legit' ? 'legit ✓' : e.sus.yes + e.sus.no >= v.members.length - 1 ? 'flagged (voiding needs 2 votes)' : 'voting…'}</div>` : ''}
           <div class="reacts">${reacts}${canVote ? `<button class="sus" data-action="cl-vote" data-id="${e.id}" data-fake="1">Sus</button><button class="react" data-action="cl-vote" data-id="${e.id}" data-fake="0">Legit</button>` : e.myVote ? `<span class="small muted">You voted ${e.myVote.fake ? 'sus' : 'legit'}</span>` : ''}</div></div>
-          <span class="pts ${e.points >= 0 ? 'pos' : 'neg'}">${e.points > 0 ? '+' : ''}${e.points}</span>`;
+          <span class="pts ${e.points >= 0 ? 'pos' : 'neg'}">${e.points < 0 ? e.points : 'safe'}</span>`;
       } else if (e.kind === 'miss') {
         body = `${ava(m)}<div class="fb muted"><strong>${nameOf(e.member)}</strong> missed <em>${esc((m.habits.find(h => h.id === e.habit) || {}).title || '')}</em></div><span class="pts neg">${e.points}</span>`;
       } else if (e.kind === 'result') {
         const w = e.pa === e.pb ? null : e.pa > e.pb ? e.a : e.b;
-        body = `<span class="ava trophy" aria-hidden="true">⚑</span><div class="fb"><strong>Week ${e.week + 1} final:</strong> ${nameOf(e.a)} ${e.pa} – ${e.pb} ${nameOf(e.b)}${w ? ` · <span class="gold-text">${nameOf(w)} win${w === myId ? '' : 's'}</span>` : ' · tie'}</div>`;
+        body = `<span class="ava trophy" aria-hidden="true">⚑</span><div class="fb"><strong>Week ${e.week + 1} final:</strong> ${nameOf(e.a)} ${e.pa} · ${e.pb} ${nameOf(e.b)}${w ? ` · <span class="gold-text">${nameOf(w)} win${w === myId ? '' : 's'}</span>` : ' · tie'}</div>`;
       } else if (e.kind === 'chat') {
         body = `${ava(m || { name: '?', color: '#888' })}<div class="fb"><div><strong>${nameOf(e.member)}:</strong> ${esc(e.text)}</div><div class="reacts">${reacts}</div></div>`;
       }
@@ -995,25 +1099,17 @@
     </details>`;
   }
 
-  function realFinale(v, table, isHost, nameOf) {
-    const r = v.result, myId = me();
-    if (!r) {
-      return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over</div>
-        <h2>🏆 ${nameOf(table[0].id)} ${table[0].id === myId ? 'win' : 'wins'}</h2>
-        <p class="muted mb0">${isHost ? 'You\'re the host. Spin to reveal the loser\'s punishment.' : 'Waiting for the host to spin the wheel…'}</p>
-        ${isHost ? '<button class="primary big-cta" data-action="cl-spin">Spin the punishment wheel</button>' : ''}</div>`;
-    }
-    const loser = League.member(v, r.loser), isMe = r.loser === myId;
-    // keep the reel animation working: animateReel reads lg.result, so mirror it
-    return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over · last place</div>
-      <div class="loser">${ava(loser, true)}<h2 class="mb0">${isMe ? 'You' : esc(loser.name)}</h2></div>
-      <div class="reel-wrap"><div class="reel-label">${isMe ? 'You have to' : esc(loser.name) + ' has to'}</div>
-        <div class="reel" data-reel>${esc(r.punishment)}</div>
-        <div class="small muted">${League.PUNISHMENTS[r.tier].label}${r.vetoUsed ? ' · veto used' : ''}</div></div>
-      ${r.proved ? `<p class="mb0" style="color:#8dffc6">✓ Punishment served.</p>` : isMe ? `<div class="row" style="justify-content:center">
-          ${!r.vetoUsed ? '<button class="ghost" data-action="cl-veto">Use my veto (1 left)</button>' : ''}
-          <button class="primary" data-action="cl-served">I did it</button></div>
-          <p class="small muted mb0">Post your proof in the group chat, then tap "I did it".</p>` : '<p class="small muted mb0">The group is waiting on proof.</p>'}
+  function realFinale(v, nameOf) {
+    const myId = me(), lose = League.losers(v), served = (v.result && v.result.served) || [];
+    if (!lose.length) return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over</div>
+      <h2>Everyone survived.</h2><p class="muted mb0">Nobody finished last. Nobody does it. Run it back?</p></div>`;
+    const names = lose.map(nameOf).join(' & ');
+    const iLost = lose.includes(myId), done = lose.every(id => served.includes(id));
+    return `<div class="felt finale"><div class="eyebrow" style="color:var(--gold-hi)">Season over · fewest chips</div>
+      <div class="loser">${lose.map(id => ava(League.member(v, id), true)).join('')}<h2 class="mb0">${names}</h2></div>
+      <div class="reel-wrap"><div class="reel-label">${lose.length > 1 || iLost ? (iLost && lose.length === 1 ? 'You have to' : 'They have to') : 'Has to'}</div>
+        <div class="reel landed">${esc(v.consequence || 'the agreed consequence')}</div></div>
+      ${done ? '<p class="mb0" style="color:var(--done)">✓ Done. Respect.</p>' : iLost && !served.includes(myId) ? '<button class="primary" data-action="cl-served">I did it</button><p class="small muted mb0">Post the proof in the feed first.</p>' : '<p class="small muted mb0">Waiting on proof…</p>'}
     </div>`;
   }
 
@@ -1117,7 +1213,7 @@
           ${!isBet && measured ? `<label>How much did you do? <span class="hint">target ${target.measure.amount} ${esc(target.measure.unit)}; less than the target unlocks a share and uses a chance</span>
             <input name="done" type="number" min="0" step="any" value="${target.measure.amount}" required></label>` : ''}
           <label>Note <span class="hint">optional</span><input name="note" maxlength="200" placeholder="How did it go?"></label>
-          <button class="primary big-cta" type="submit">${isBet ? 'Submit proof, keep my ' + fmtCredits(target.stake) + ' credits' : 'Submit proof'}</button>` : ''}
+          <button class="primary big-cta" type="submit">${isBet ? 'Submit proof, keep my ' + fmtCredits(target.stake) + ' chips' : 'Submit proof'}</button>` : ''}
       </form></div></div>`;
   }
 
@@ -1143,7 +1239,7 @@
     return `<div class="sheet-backdrop" data-action="close-sheet-backdrop"><div class="sheet" role="dialog" aria-modal="true">
       <button class="ghost close" data-action="close-sheet" aria-label="Close">✕</button>
       <h2>Earn it back</h2>
-      <p>${fmtCredits(e.amount)} credits locked from <strong>${esc(bet.title)}</strong> (${esc(measureText(bet.measure))} in ${fmtDur(origWindow)}). ${e.chancesLeft} chance${e.chancesLeft === 1 ? '' : 's'} left.</p>
+      <p>${fmtCredits(e.amount)} chips locked from <strong>${esc(bet.title)}</strong> (${esc(measureText(bet.measure))} in ${fmtDur(origWindow)}). ${e.chancesLeft} chance${e.chancesLeft === 1 ? '' : 's'} left.</p>
       <form data-form="redeem" data-id="${e.id}">
         <label>Challenge <input name="title" required maxlength="120" value="${esc(d.title)}"></label>
         <div class="form-row">
@@ -1171,8 +1267,12 @@
   }
 
   // ---------- after render ----------
+  function mountHero3d() { const el = app.querySelector('.hero-art'); if (el && window.Hero3D) window.Hero3D.mount(el); }
+  window.addEventListener('hero3d-ready', mountHero3d);
+
   async function afterRender() {
     animateCounts();
+    mountHero3d();
     if (ui.tab === 'league') animateReel();
     const xp = app.querySelector('[data-xp]');
     if (xp) {
@@ -1224,7 +1324,7 @@
     c.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:55';
     c.width = innerWidth * dpr; c.height = innerHeight * dpr; document.body.appendChild(c);
     const ctx = c.getContext('2d'); ctx.scale(dpr, dpr);
-    const colors = ['#c99a3a', '#c99a3a', '#c2413b', '#2f5fc9', '#17855a'];
+    const colors = ['#d7dbe1', '#d7dbe1', '#2a2d32', '#6b717a', '#b89b6a'];
     const W = innerWidth, H = innerHeight;
     const parts = Array.from({ length: 70 }, () => ({
       x: W / 2 + (Math.random() - .5) * 60, y: H * .42, vx: (Math.random() - .5) * 13, vy: -Math.random() * 13 - 5,
@@ -1336,6 +1436,27 @@
       }
 
       case 'deadline-pick': ui.deadlinePick = btn.dataset.k; if (btn.dataset.k === 'custom') ui.customDeadline = now() + 24 * HOUR; render(); setTimeout(() => { const el = app.querySelector('[name="title"]'); if (el) el.focus(); }, 0); break;
+      case 'ob-goal': {
+        const g = btn.dataset.v, i = ob.goals.indexOf(g);
+        if (i >= 0) ob.goals.splice(i, 1); else if (ob.goals.length < 3) ob.goals.push(g); else { toast('Pick up to 3.'); break; }
+        Sfx.chip(); render(); break;
+      }
+      case 'ob-mode': ob.mode = btn.dataset.v; Sfx.chip(); render(); setTimeout(() => { ob.step = 3; render(); }, 260); break;
+      case 'ob-level': ob.level = btn.dataset.v; Sfx.chip(); render(); setTimeout(() => { ob.step = 4; render(); }, 260); break;
+      case 'ob-next': ob.step++; render(); break;
+      case 'ob-back': ob.step = Math.max(0, ob.step - 1); render(); break;
+      case 'ob-skip': finishSetup(true); break;
+      case 'ob-finish': Sfx.stake(); finishSetup(false); break;
+      case 'redo-setup': state.settings.onboarded = false; Object.assign(ob, { step: 0, goals: [], mode: null, level: null }); Storage.save(state); render(); window.scrollTo({ top: 0 }); break;
+      case 'refill': tryRun(() => Core.grant(state, 100 - state.wallet.credits, now(), 'Refill'), 'Refilled to 100 chips.'); break;
+      case 'goal-idea': {
+        const form = btn.closest('form'); if (!form) break;
+        const slot = [1, 2, 3].find(i => !form.elements['t' + i].value.trim());
+        if (!slot) { toast('Three habits max. Clear one first.'); break; }
+        form.elements['t' + slot].value = btn.dataset.g; rebalance(form); Sfx.chip(); break;
+      }
+      case 'cl-vote-cons': cloudDo(() => Cloud.voteConsequence(cloud.current, btn.dataset.c), 'Vote locked in.').then(refreshLeague); break;
+      case 'hero-focus-name': { const n = app.querySelector('form[data-form="cloud-signup"] input[name="name"]'); if (n) { n.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => n.focus(), 350); } break; }
       case 'lg-mode': ui.lgMode = btn.dataset.m || null; if (ui.lgMode !== 'demo') cloudBoot(); render(); window.scrollTo({ top: 0 }); break;
       case 'cl-cancel-join': cloud.joinCode = null; cloud.preview = null; history.replaceState(null, '', '#league'); render(); break;
       case 'cl-open': openLeague(btn.dataset.id); break;
@@ -1385,7 +1506,7 @@
         cloudDo(() => Cloud.veto(d.league.id, opts[Math.floor(Math.random() * opts.length)], t)).then(r => { if (r) { ui.lgSpin = true; refreshLeague(); } });
         break;
       }
-      case 'cl-served': cloudDo(() => Cloud.served(cloud.current), 'Debt paid. Respect.').then(r => { if (r) { Sfx.win(); refreshLeague(); } }); break;
+      case 'cl-served': cloudDo(() => Cloud.served(cloud.current), 'Done. Respect.').then(r => { if (r) { Sfx.win(); refreshLeague(); } }); break;
       case 'lg-prove': { const e2 = (() => { try { return League.prove(lg, btn.dataset.id); } catch (err) { toast(err.message); return null; } })(); if (e2) { saveLeague(); Sfx.chip(); toast(`+${e2.points} · ${habitTitle('you', e2.habit)}`, 'win'); render(); } break; }
       case 'lg-end-day': { const ev = League.endDay(lg, Math.random, 0); saveLeague(); leagueEvents(ev); render(); break; }
       case 'lg-sim': {
@@ -1414,7 +1535,7 @@
         const tier = Number(f.elements.proofTier.value), max = RULES.MAX_STAKE_BY_TIER[tier];
         const cur = Number(f.elements.stake.value) || 0, want = cur + Number(btn.dataset.v);
         f.elements.stake.value = Math.min(max, want);
-        if (want > max) toast(`Max ${max} credits on ${TIERS[tier].name.toLowerCase()} proof.`);
+        if (want > max) toast(`Max ${max} chips on ${TIERS[tier].name.toLowerCase()} proof.`);
         Sfx.chip();
         btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop');
         break;
@@ -1465,6 +1586,7 @@
       };
       reader.readAsText(el.files[0]); el.value = ''; return;
     }
+    if (el.form && /^[tc][123]$/.test(el.name || '')) { if (el.name[0] === 't') rebalance(el.form); else updateChipTotal(el.form); return; }
     if (el.dataset.action === 'sound-toggle') {
       state.settings.sound = el.checked; Storage.save(state);
       if (el.checked) Sfx.chip();
@@ -1513,7 +1635,7 @@
         const deadline = ui.deadlinePick === 'custom' ? new Date(f.deadline).getTime() : quickDeadline(ui.deadlinePick);
         const measure = f.measureKind === 'binary' || !f.measureAmount ? { kind: 'binary' } : { kind: f.measureKind, amount: Number(f.measureAmount), unit: f.measureUnit || undefined };
         const bet = tryRun(() => Core.placeBet(state, { title: f.title, why: f.why, stake: Number(f.stake), deadline, proofTier: Number(f.proofTier), destination: f.destination || Content.DESTINATIONS[0], measure }, t));
-        if (bet) { Sfx.stake(); toast(`${fmtCredits(bet.stake)} on the table for "${bet.title}". Prove it by ${fmtWhen(bet.deadline)}.`); ui.betFilter = 'active'; setTab('today'); }
+        if (bet) { clearPrefill(); Sfx.stake(); toast(`${fmtCredits(bet.stake)} on the table for "${bet.title}". Prove it by ${fmtWhen(bet.deadline)}.`); ui.betFilter = 'active'; setTab('today'); }
         break;
       }
       case 'proof': {
@@ -1529,7 +1651,7 @@
           ui.sheet = null; Camera.stop();
           if (kind === 'prove-bet') { payout({ kicker: 'Proved it', amount: target.stake, sub: `Back in your wallet · ${target.title}` }); celebrate(); Sfx.win(); }
           else if (res.fraction >= 1) { payout({ kicker: 'Earned it back', amount: res.unlocked, sub: 'Out of the Vault and into your wallet.' }); celebrate(); Sfx.win(); }
-          else if (res.fraction > 0) { toast(`Partial: ${fmtCredits(res.unlocked)} credits unlocked. One chance used.`, 'win'); Sfx.chip(); }
+          else if (res.fraction > 0) { toast(`Partial: ${fmtCredits(res.unlocked)} chips unlocked. One chance used.`, 'win'); Sfx.chip(); }
           else toast('Logged as a miss. One chance used. What got in the way?', 'lock');
           commit();
         };
@@ -1543,6 +1665,7 @@
         if (r) { ui.sheet = null; Sfx.stake(); toast(`Challenge on. Harder by ${r.harderBy.join(', ')}. ${fmtWhen(r.deadline)}.`); commit(); }
         break;
       }
+      case 'ob-name': ob.name = (f.name || '').trim().slice(0, 30); if (ob.name) { ob.step = 1; render(); } break;
       case 'cloud-signup':
         cloudDo(() => Cloud.signUp(f.name)).then(async p => {
           if (!p) return;
@@ -1552,12 +1675,12 @@
         });
         break;
       case 'cloud-create':
-        cloudDo(() => Cloud.createLeague({ name: f.name, tier: f.tier, weeks: Number(f.weeks), habits: [f.h1, f.h2] }), 'League created. Now invite your friends.')
+        cloudDo(() => Cloud.createLeague({ name: f.name, tier: f.tier, weeks: Number(f.weeks), habits: readHabits(f) }), 'League created. Now invite your friends.')
           .then(g => { if (g) { Sfx.stake(); openLeague(g.id); } });
         break;
       case 'cloud-code': cloud.joinCode = String(f.code || '').trim().toUpperCase(); cloud.preview = null; loadPreview(); render(); break;
       case 'cloud-join':
-        cloudDo(() => Cloud.joinLeague(cloud.joinCode, [f.h1, f.h2]), 'You\'re in.').then(id => {
+        cloudDo(() => Cloud.joinLeague(cloud.joinCode, readHabits(f)), 'You\'re in.').then(id => {
           if (!id) return;
           cloud.joinCode = null; cloud.preview = null; history.replaceState(null, '', '#league'); Sfx.stake(); openLeague(id);
         });
@@ -1565,6 +1688,12 @@
       case 'cloud-chat': {
         const input = form.elements.body;
         cloudDo(() => Cloud.postChat(cloud.current, f.body)).then(() => { input.value = ''; refreshLeague(); });
+        break;
+      }
+      case 'cloud-cons': {
+        const bad = League.screenPunishment(f.text);
+        if (bad) { toast('Rejected: ' + bad, 'lock'); break; }
+        cloudDo(() => Cloud.voteConsequence(cloud.current, f.text.trim()), 'Proposed, and your vote is on it.').then(refreshLeague);
         break;
       }
       case 'cloud-suggest': {
@@ -1613,8 +1742,10 @@
       }
     }
     state.settings.lastSeenAt = t;
+    state.settings.simple = true; // misses just cost chips (no vault / comebacks)
+    if (state.settings.onboarded == null && state.bets.length) state.settings.onboarded = true;
     Storage.save(state);
-    setTab(location.hash.slice(1) || 'today');
+    setTab(location.hash.slice(1) || 'league');
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }

@@ -138,8 +138,9 @@ const proof = (id, user, hid, day) => ({ id, user_id: user, kind: 'proof', habit
 test('cloud: past days without proof are misses, today stays open, streaks build', () => {
   const data = cloudData({ entries: [proof('e1', 'u1', 'ah1', 0), proof('e2', 'u1', 'ah1', 1), proof('e3', 'u1', 'ah1', 2)] });
   const lg = League.fromCloud(data, 2, 'u1');
-  assert.equal(League.points(lg, 'u1'), 10 + 12 + 14);
-  assert.equal(League.points(lg, 'u2'), -10); // missed day 0 and 1; day 2 still open
+  assert.equal(League.points(lg, 'u1'), 0);            // proved every day: all chips safe
+  assert.equal(League.points(lg, 'u2'), -20);          // missed day 0 and 1 (10 chips each); day 2 still open
+  assert.equal(League.chipsLeft(lg, 'u2'), 7 * 10 - 20);
   assert.equal(lg.finished, false);
 });
 
@@ -149,7 +150,7 @@ test('cloud: majority sus vote voids a proof; one vote alone does not', () => {
   assert.equal(lg.log.find(x => x.id === 'e1').kind, 'proof'); // 1 of 2 eligible: not a majority yet
   lg = League.fromCloud(cloudData({ entries: [e], votes: [{ entry_id: 'e1', voter_id: 'u1', fake: true }, { entry_id: 'e1', voter_id: 'u3', fake: true }] }), 1, 'u1');
   const x = lg.log.find(y => y.id === 'e1');
-  assert.equal(x.kind, 'fake'); assert.equal(x.points, League.SCORING.FAKE);
+  assert.equal(x.kind, 'fake'); assert.equal(x.points, -10);
 });
 
 test('cloud: in a 2-player league one sus vote alone cannot void a proof', () => {
@@ -170,6 +171,20 @@ test('cloud: season ends after weeks*7 days with week results and a standings lo
   assert.ok(lg.log.some(e => e.kind === 'result'));
   const table = League.standings(lg);
   assert.equal(table[0].id, 'u1');
+  assert.deepEqual(League.losers(lg).sort(), ['u2', 'u3']); // tied for fewest chips: both do it
+});
+
+test('cloud: chips split per habit, losers, consequence tally', () => {
+  const data = cloudData();
+  data.members[0].habits = [{ id: 'x', title: 'Gym', chips: 7 }, { id: 'y', title: 'Read', chips: 3 }];
+  data.entries = [proof('e1', 'u1', 'x', 0)];
+  const lg = League.fromCloud(data, 1, 'u1');
+  assert.equal(League.points(lg, 'u1'), -3); // proved gym (7 safe), missed read (3 lost)
+  const perfect = League.fromCloud(cloudData({ members: cloudData().members.slice(0, 2), entries: [proof('a', 'u1', 'ah1', 0), proof('b', 'u2', 'bh1', 0)] }), 1, 'u1');
+  assert.deepEqual(League.losers(perfect), []); // everyone tied → nobody loses
+  const t = League.consequenceTally([{ choice: 'A' }, { choice: 'B' }, { choice: 'B' }]);
+  assert.equal(t[0].choice, 'B'); assert.equal(t[0].n, 2);
+  assert.deepEqual(League.splitChips(3), [4, 3, 3]);
 });
 
 test('cloud: custom punishments enter the wheel only when a majority approves', () => {

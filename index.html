@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Vault — bet on yourself</title>
-  <meta name="description" content="Bet on yourself. Set a goal, stake credits, prove you did it. Miss it and the stake is locked in your Vault, not lost: earn it back with a harder challenge. We never keep your money.">
-  <meta name="theme-color" content="#0f5a3d">
+  <title>Vault — fantasy football for your habits</title>
+  <meta name="description" content="Fantasy football for your habits. Start a league with friends, bet chips on the habits you want to stick to, prove it daily. Fewest chips does the consequence. No real money.">
+  <meta name="theme-color" content="#0b0c0e">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700;800&display=swap">
-  <link rel="stylesheet" href="css/style.css?v=0.6.1">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@600;700;800&family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="css/style.css?v=1.1">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -22,16 +22,13 @@
 <body>
   <header class="site-header">
     <div class="wrap header-inner">
-      <a href="#today" class="brand" data-nav="today" aria-label="Vault home">
-        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><defs><linearGradient id="bm-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6dc97"/><stop offset="1" stop-color="#b8892c"/></linearGradient></defs><rect x="1" y="1" width="30" height="30" rx="8" fill="#0f5a3d"/><circle cx="16" cy="16" r="9.5" fill="none" stroke="url(#bm-g)" stroke-width="2.4"/><circle cx="16" cy="16" r="3" fill="url(#bm-g)"/><path d="M16 4.5v3.5M16 24v3.5M4.5 16H8M24 16h3.5" stroke="url(#bm-g)" stroke-width="2.4" stroke-linecap="round"/></svg></span>
+      <a href="#league" class="brand" data-nav="league" aria-label="Vault home">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><defs><linearGradient id="bm-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f5f6f8"/><stop offset="1" stop-color="#8e949c"/></linearGradient></defs><rect x="1" y="1" width="30" height="30" rx="8" fill="#15171a"/><circle cx="16" cy="16" r="9.5" fill="none" stroke="url(#bm-g)" stroke-width="2.4"/><circle cx="16" cy="16" r="3" fill="url(#bm-g)"/><path d="M16 4.5v3.5M16 24v3.5M4.5 16H8M24 16h3.5" stroke="url(#bm-g)" stroke-width="2.4" stroke-linecap="round"/></svg></span>
         <span class="brand-text">Vault</span>
       </a>
       <nav class="tabs" aria-label="Main">
-        <a href="#today" data-nav="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg><span>Today</span></a>
-        <a href="#bets" data-nav="bets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M14 5v2M14 11v2M14 17v2"/></svg><span>Bets</span></a>
-        <a href="#vault" data-nav="vault"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="4"/><path d="M12 8v1.5M12 14.5V16M8 12h1.5M14.5 12H16M6 20v1.5M18 20v1.5"/></svg><span>Vault</span></a>
         <a href="#league" data-nav="league"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 21h8M12 17v4"/><path d="M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></svg><span>League</span></a>
-        <a href="#learn" data-nav="learn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v15H6a2 2 0 0 0-2 2z"/><path d="M4 20a2 2 0 0 0 2 2h13v-4"/></svg><span>Learn</span></a>
+        <a href="#today" data-nav="today"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg><span>Solo</span></a>
         <a href="#settings" data-nav="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></a>
       </nav>
       <a href="#ledger" class="wallet-pill" data-nav="ledger" aria-label="Wallet balance" id="wallet-pill"></a>
@@ -50,14 +47,14 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-  <script src="js/core.js?v=0.6.1"></script>
-  <script src="js/storage.js?v=0.6.1"></script>
-  <script src="js/camera.js?v=0.6.1"></script>
-  <script src="js/feedback.js?v=0.6.1"></script>
-  <script src="js/content.js?v=0.6.1"></script>
-  <script src="js/league.js?v=0.6.1"></script>
+  <script src="js/core.js?v=1.1"></script>
+  <script src="js/storage.js?v=1.1"></script>
+  <script src="js/camera.js?v=1.1"></script>
+  <script src="js/feedback.js?v=1.1"></script>
+  <script src="js/content.js?v=1.1"></script>
+  <script src="js/league.js?v=1.1"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-  <script src="js/cloud.js?v=0.6.1"></script>
-  <script src="js/app.js?v=0.6.1"></script>
+  <script src="js/cloud.js?v=1.1"></script>
+  <script src="js/app.js?v=1.1"></script>
 </body>
 </html>

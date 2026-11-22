@@ -2,7 +2,12 @@
 
 Read this first, then `docs/VAULT_DESIGN.md`, then `docs/ROADMAP.md`.
 
-## What this is
+## What this is (v1.0)
+**Fantasy football for your habits.** League-first: friends start a league, vote on the loser's consequence in the lobby, split 10 chips a day across 1–3 habits, prove each habit daily (live photo challenge). Proved = chips safe, missed or voted fake = chips lost. Fewest chips at the end does the consequence (ties all do it; if everyone ties, nobody does). No real money, ever. Solo mode (Today tab, labelled Solo) is the original bet-on-yourself tracker in `settings.simple` mode: a miss just loses the stake. Nav is League / Solo / Settings; Vault, Ledger, Learn and the bot demo still exist as routes but are hidden.
+
+New users get a 5-step setup flow first (`welcome()` in app.js: name → up to 3 goals → friends/solo/both → easy/steady/all in → personal plan). Answers live in `state.settings.profile` and drive `Content.suggestionsFor()` (league goal helper, solo bet prefill, consequence tier). Invite links skip it; Settings → Redo setup.
+
+### Original concept
 A bet-on-yourself accountability web app. Set a goal, stake credits, prove it
 before the deadline, keep the credits. Miss it and the stake is **locked in a
 Vault, not lost**: three chances to earn it back with a measurably harder
@@ -51,7 +56,7 @@ browser (scripts attach globals: Core, Storage, Camera, Feedback, Content).
 - Rules in `core.js`, never in `app.js`. UI calls Core and shows the thrown message as a toast (`tryRun`).
 - `now()` in app.js includes `settings.clockOffset` (the Settings "time machine"). Never call `Date.now()` directly in Core.
 - Escape all user text with `esc()` before putting it in HTML.
-- Look: card-room theme (felt green, gold, chips). Classy, never flashy: no odds, jackpots or slot imagery, and copy stays honest (play credits, we never keep money). Bump the `?v=` tags in index.html when CSS/JS change.
+- Look (v0.7): dark luxury — matte black, brushed titanium/silver, Inter Tight headings, Three.js hero (`js/hero3d.js`: vault dial + chips, studio light; open with `?tweak` for sliders, paste copied settings into DEFAULTS; pure-CSS chips in `heroHtml()` are the fallback). Classy, never flashy: no odds, jackpots or slot imagery, and copy stays honest (play credits, we never keep money). Bump the `?v=` tags in index.html when CSS/JS change.
 - Mobile-first; test at 375px. Dark mode via `prefers-color-scheme`.
 - Keep it dependency-free until Phase 1 (Supabase) actually needs otherwise.
 

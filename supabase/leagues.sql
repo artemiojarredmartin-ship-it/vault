@@ -255,3 +255,13 @@ grant execute on function public.preview_league(text) to authenticated;
 -- =====================================================================
 drop policy if exists "leagues: creator updates result" on public.leagues;
 alter publication supabase_realtime add table public.leagues, public.members;
+
+-- =====================================================================
+-- v1.0 (vault_v2_consequence_and_chips + vault_proofs_delete_own)
+-- Chips: 10 a day split across 1–3 habits (private.valid_habits checks the split on create/join).
+-- The group votes on one consequence in the lobby (consequence_votes); start_league requires
+-- everyone to have voted and locks the top pick into leagues.consequence.
+-- mark_served(p_league): after the season, a player adds themself to result.served.
+-- Players can delete their own proof photos.
+-- See those Supabase migrations for the exact SQL.
+-- =====================================================================

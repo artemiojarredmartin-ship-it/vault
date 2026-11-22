@@ -232,6 +232,7 @@
         for (const m of byes) { const p = points(lg, m.id, w); if (p > avg) row(m.id).w++; else if (p < avg) row(m.id).l++; else row(m.id).t++; }
       }
     }
+    if (lg.chipsMode) return rows.sort((x, y) => y.pts - x.pts || (y.w + y.t / 2) - (x.w + x.t / 2) || x.name.localeCompare(y.name));
     return rows.sort((x, y) => (y.w + y.t / 2) - (x.w + x.t / 2) || y.pts - x.pts || x.name.localeCompare(y.name));
   }
 
@@ -284,6 +285,25 @@
   function markServed(lg) { assert(lg.result, 'No punishment yet.'); lg.result.proved = true; return lg.result; }
 
   // ---------- real leagues ----------
+  // Chips: every player risks 10 chips a day, split across their habits. Prove a habit → its chips are safe.
+  // Miss it (or get voted fake) → lose them. Fewest chips at the end does the consequence.
+  const DAILY_CHIPS = 10;
+  function habitChips(m, h) { return Number(h.chips) > 0 ? Number(h.chips) : Math.max(1, Math.round(DAILY_CHIPS / (m.habits.length || 1))); }
+  function chipsLeft(lg, mid) { return lg.startChips + points(lg, mid); }
+  // Losers: everyone tied for the fewest chips. Nobody loses if everyone is tied.
+  function losers(lg) {
+    const left = lg.members.map(m => ({ id: m.id, c: chipsLeft(lg, m.id) }));
+    const min = Math.min(...left.map(x => x.c)), max = Math.max(...left.map(x => x.c));
+    return min === max ? [] : left.filter(x => x.c === min).map(x => x.id);
+  }
+  // Most-voted consequence (ties → whichever was voted first).
+  function consequenceTally(votes) {
+    const t = {};
+    votes.forEach((v, i) => { (t[v.choice] = t[v.choice] || { choice: v.choice, n: 0, first: i }).n++; });
+    return Object.values(t).sort((a, b) => b.n - a.n || a.first - b.first);
+  }
+  // Suggest how to split 10 chips: harder habits get more.
+  function splitChips(n) { return n <= 1 ? [10] : n === 2 ? [5, 5] : [4, 3, 3]; }
   // A sus vote is decided once a majority of the other members agree either way.
   function susVerdict(votes, eligible) {
     const yes = votes.filter(v => v.fake).length, no = votes.length - yes;
@@ -304,7 +324,9 @@
     const members = data.members.slice().sort((a, b) => String(a.joined_at).localeCompare(String(b.joined_at)))
       .map(m => ({ id: m.user_id, name: (m.profile && m.profile.name) || 'Player', color: (m.profile && m.profile.color) || '#888888', habits: m.habits || [], bot: false }));
     const lg = {
-      v: 1, cloud: true, id: g.id, code: g.code, host: g.created_by, me,
+      v: 1, cloud: true, chipsMode: true, id: g.id, code: g.code, host: g.created_by, me,
+      startChips: g.weeks * 7 * DAILY_CHIPS, consequence: g.consequence || null,
+      votes: (data.consequenceVotes || []).map(x => ({ user: x.user_id, choice: x.choice })),
       name: g.name, weeks: g.weeks, days, tier: g.tier,
       started: !!g.starts_on, day: Math.max(0, Math.min(today, days)), finished: !!g.starts_on && today >= days,
       members, schedule: roundRobin(members.map(m => m.id), g.weeks),
@@ -323,6 +345,7 @@
       for (const m of members) {
         for (const h of m.habits) {
           const k = m.id + '|' + h.id;
+          const chips = habitChips(m, h);
           const e = byKey[m.id + '|' + h.id + '|' + d];
           if (e) {
             const votes = votesBy[e.id] || [];
@@ -332,12 +355,12 @@
             const reacts = {}, mine = {};
             for (const r of reactsBy[e.id] || []) { reacts[r.emoji] = (reacts[r.emoji] || 0) + 1; if (r.user_id === me) mine[r.emoji] = true; }
             lg.log.push({ id: e.id, day: d, member: m.id, habit: h.id, kind: fake ? 'fake' : 'proof',
-              points: fake ? SCORING.FAKE : SCORING.PROOF + Math.min(SCORING.STREAK_CAP, streak * SCORING.STREAK_STEP),
+              points: fake ? -chips : 0, chips,
               streak: streak + 1, reacts, mine, sus: sus && { by: votes[0].voter_id, yes: sus.yes, no: sus.no, verdict: sus.verdict },
               myVote: votes.find(v => v.voter_id === me) || null, photo: e.photo_path, challenge: e.challenge, t: Date.parse(e.created_at) });
             streaks[k] = fake ? 0 : streak + 1;
           } else if (d < today) {
-            lg.log.push({ id: 'miss_' + k + '_' + d, day: d, member: m.id, habit: h.id, kind: 'miss', points: SCORING.MISS, reacts: {}, t: startMs + (d + 1) * 864e5 - 1 });
+            lg.log.push({ id: 'miss_' + k + '_' + d, day: d, member: m.id, habit: h.id, kind: 'miss', points: -chips, chips, reacts: {}, t: startMs + (d + 1) * 864e5 - 1 });
             streaks[k] = 0;
           }
         }
@@ -384,7 +407,7 @@
   return {
     SCORING, PUNISHMENTS, TIER_ORDER, BOTS, MAX_HABITS, MONEY_CAP,
     create, roundRobin, prove, endDay, sus, react, points, matchup, standings, pool, addCustom, finish, veto, markServed,
-    fromCloud, susVerdict, cloudPool, screenPunishment,
+    fromCloud, susVerdict, cloudPool, screenPunishment, DAILY_CHIPS, chipsLeft, losers, consequenceTally, splitChips,
     member, weekOf, streakBefore
   };
 });

@@ -82,9 +82,10 @@
     const atStake = state.bets.filter(b => b.status === 'active').reduce((n, b) => n + b.stake, 0);
     const inVault = state.vault.filter(e => e.status === 'locked').reduce((n, e) => n + e.amount, 0);
     const decayed = state.vault.filter(e => e.status === 'decayed').reduce((n, e) => n + e.amount, 0);
+    const lost = state.bets.filter(b => b.status === 'lost').reduce((n, b) => n + b.stake, 0);
     const granted = state.ledger.filter(l => l.reason === 'grant').reduce((n, l) => n + l.delta, 0);
     const wallet = state.wallet.credits;
-    return { wallet: round(wallet), atStake: round(atStake), inVault: round(inVault), decayed: round(decayed), granted: round(granted), total: round(wallet + atStake + inVault + decayed) };
+    return { wallet: round(wallet), atStake: round(atStake), inVault: round(inVault), decayed: round(decayed), lost: round(lost), granted: round(granted), total: round(wallet + atStake + inVault + decayed + lost) };
   }
 
   function checkInvariants(state) {
@@ -315,7 +316,14 @@
   function tick(state, now) {
     const events = [];
     for (const bet of state.bets) {
-      if (bet.status === 'active' && now > bet.deadline) { lockBet(state, bet, now); events.push({ type: 'locked', bet }); }
+      if (bet.status === 'active' && now > bet.deadline) {
+        if (state.settings && state.settings.simple) {
+          // Simple mode: a miss just costs the chips. No vault, no comeback.
+          bet.status = 'lost'; bet.resolvedAt = bet.deadline;
+          ledger(state, now, 0, 'lost', bet.id, `Missed "${bet.title}": ${bet.stake} chips lost`);
+          events.push({ type: 'lost', bet });
+        } else { lockBet(state, bet, now); events.push({ type: 'locked', bet }); }
+      }
     }
     for (const r of state.redemptions) {
       if (r.status === 'active' && now > r.deadline) {
@@ -343,7 +351,7 @@
 
   // ---------- stats ----------
   function stats(state) {
-    const resolved = state.bets.filter(b => ['won', 'locked'].includes(b.status));
+    const resolved = state.bets.filter(b => ['won', 'locked', 'lost'].includes(b.status));
     const won = resolved.filter(b => b.status === 'won').length;
     const entries = state.vault;
     const recovered = entries.reduce((n, e) => n + e.redeemedTotal, 0);

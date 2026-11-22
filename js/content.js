@@ -176,5 +176,34 @@
     return { text, category: cat.label };
   }
 
-  global.Content = { DESTINATIONS, PROMPTS, LEARN, TEMPLATES, CHALLENGE_CATEGORIES, challengeCategory, pickChallenge };
+  // Setup flow: what people want to improve, with habits at three difficulty levels.
+  const GOALS = [
+    { id: 'fitness', label: 'Fitness', habits: ['20 min walk', 'Gym 45 min', 'Train 60 min'] },
+    { id: 'sleep', label: 'Sleep', habits: ['In bed by 12', 'In bed by 11', 'In bed by 10:30'] },
+    { id: 'mornings', label: 'Mornings', habits: ['Up by 8am', 'Up by 7am', 'Up by 6am'] },
+    { id: 'focus', label: 'Focus & study', habits: ['Study 30 min', 'Study 1 hour', 'Study 2 hours'] },
+    { id: 'reading', label: 'Reading', habits: ['Read 10 pages', 'Read 20 pages', 'Read 40 pages'] },
+    { id: 'health', label: 'Eating & health', habits: ['Drink 2L water', 'No junk food', 'Cook every meal'] },
+    { id: 'phone', label: 'Less phone', habits: ['No phone in bed', 'No phone after 11pm', 'Under 2h screen time'] },
+    { id: 'practice', label: 'Practice a skill', habits: ['Practice 15 min', 'Practice 30 min', 'Practice 1 hour'] },
+    { id: 'mind', label: 'Mindfulness', habits: ['Meditate 5 min', 'Journal one page', 'Meditate 20 min'] },
+    { id: 'money', label: 'Money', habits: ['Log every purchase', 'No takeout', 'No-spend day'] }
+  ];
+  const LEVELS = [
+    { id: 'easy', label: 'Easy start', sub: 'Small wins. Build the streak first.', tier: 'mild' },
+    { id: 'steady', label: 'Steady', sub: 'Real effort, every day.', tier: 'medium' },
+    { id: 'hard', label: 'All in', sub: 'Make it hurt a little.', tier: 'spicy' }
+  ];
+  // Personal habit ideas: your goals at your level first, then neighbours, then the rest.
+  function suggestionsFor(goalIds, levelId) {
+    const li = Math.max(0, LEVELS.findIndex(l => l.id === levelId));
+    const picked = GOALS.filter(g => (goalIds || []).includes(g.id));
+    const out = [];
+    picked.forEach(g => out.push(g.habits[li]));
+    picked.forEach(g => g.habits.forEach(h => out.push(h)));
+    GOALS.forEach(g => out.push(g.habits[li]));
+    return out.filter((h, i) => out.indexOf(h) === i);
+  }
+
+  global.Content = { DESTINATIONS, PROMPTS, LEARN, TEMPLATES, CHALLENGE_CATEGORIES, challengeCategory, pickChallenge, GOALS, LEVELS, suggestionsFor };
 })(window);
