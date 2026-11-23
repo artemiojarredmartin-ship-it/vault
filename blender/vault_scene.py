@@ -142,9 +142,9 @@ import random
 random.seed(7)
 FLOOR_Z = -1.18
 for i in range(6):
-    chip_instance(f'Stack{i}', (1.05 + random.uniform(-0.02, 0.02), -0.45 + random.uniform(-0.02, 0.02), FLOOR_Z + H / 2 + i * (H + 0.002)),
+    chip_instance(f'Stack{i}', (1.3 + random.uniform(-0.02, 0.02), -1.35 + random.uniform(-0.02, 0.02), FLOOR_Z + H / 2 + i * (H + 0.002)),
                   (random.uniform(-0.006, 0.006), random.uniform(-0.006, 0.006), random.uniform(0, math.tau)))
-hero = chip_instance('HeroChip', (1.55, -1.25, 0.55), (math.radians(52), math.radians(-28), math.radians(42)))
+hero = chip_instance('HeroChip', (1.75, -1.85, 0.55), (math.radians(52), math.radians(-28), math.radians(42)))
 
 # ---------- floor ----------
 # studio sweep: floor curves up into the back wall, so there is no horizon line
@@ -226,6 +226,28 @@ if ANIM or FRAME:
                 for fc in o.animation_data.action.fcurves:
                     for kp in fc.keyframe_points: kp.interpolation = 'BEZIER'; kp.easing = 'EASE_OUT'
             except Exception: pass
+
+# ---------- collision check: no chip may pass through the vault door ----------
+if '--check' in argv:
+    from mathutils.bvhtree import BVHTree
+    def world_bvh(mesh_obj, mat):
+        me = mesh_obj.data
+        verts = [mat @ v.co for v in me.vertices]
+        return BVHTree.FromPolygons(verts, [tuple(p.vertices) for p in me.polygons])
+    dial_parts = [o for o in scene.objects if o.type == 'MESH' and o.parent and (o.parent == dial or o.parent.parent == dial or (o.parent.parent and o.parent.parent.parent == dial))]
+    hits = []
+    for f in range(1, FRAMES + 1):
+        scene.frame_set(f)
+        dg = bpy.context.evaluated_depsgraph_get()
+        dial_trees = [world_bvh(o, o.matrix_world) for o in dial_parts]
+        for inst in dg.object_instances:
+            if not inst.is_instance or inst.object.type != 'MESH': continue
+            owner = inst.parent.original.name if inst.parent else '?'
+            t = world_bvh(inst.object.original, inst.matrix_world.copy())
+            if any(t.overlap(d) for d in dial_trees):
+                hits.append((f, owner)); break
+    print('CHECK', 'CLEAR' if not hits else 'HITS ' + str(sorted(set(hits))[:40]))
+    sys.exit(0)
 
 # ---------- render ----------
 scene.render.engine = 'CYCLES'

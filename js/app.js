@@ -317,7 +317,7 @@
   }
 
   // ---------- scroll hero: Blender-rendered frames scrubbed by scroll (Apple / Igloo style) ----------
-  const HERO = { n: 96, path: (i) => `assets/hero/${String(i).padStart(4, '0')}.jpg`, imgs: [], step: 1, started: false, raf: 0 };
+  const HERO = { n: 96, path: (i) => `assets/hero/${String(i).padStart(4, '0')}.jpg?v=2`, imgs: [], step: 1, started: false, raf: 0 };
   function heroLoad() {
     if (HERO.started) return; HERO.started = true;
     const small = innerWidth < 700 || (navigator.connection && navigator.connection.saveData);
