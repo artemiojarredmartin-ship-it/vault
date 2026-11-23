@@ -316,6 +316,80 @@
     </div>`;
   }
 
+  // ---------- scroll hero: Blender-rendered frames scrubbed by scroll (Apple / Igloo style) ----------
+  const HERO = { n: 96, path: (i) => `assets/hero/${String(i).padStart(4, '0')}.jpg`, imgs: [], step: 1, started: false, raf: 0 };
+  function heroLoad() {
+    if (HERO.started) return; HERO.started = true;
+    const small = innerWidth < 700 || (navigator.connection && navigator.connection.saveData);
+    HERO.step = small ? 2 : 1;
+    const order = [HERO.n];                                  // last frame first (reduced motion / fallback)
+    for (let i = 1; i <= HERO.n; i += HERO.step) order.push(i);
+    order.forEach((i, k) => {
+      const img = new Image(); img.decoding = 'async';
+      img.onload = () => { HERO.imgs[i] = img; if (k < 2) heroDraw(); };
+      setTimeout(() => { img.src = HERO.path(i); }, k < 2 ? 0 : 30 + k * 12);
+    });
+  }
+  function heroProgress(sec) {
+    if (reducedMotion()) return 1;
+    const r = sec.getBoundingClientRect(), span = r.height - innerHeight;
+    return span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 1;
+  }
+  function heroDraw() {
+    HERO.raf = 0;
+    const sec = app.querySelector('.hscroll'); if (!sec) return;
+    const cv = sec.querySelector('canvas'), p = heroProgress(sec);
+    sec.classList.toggle('s-copy', p > 0.5); sec.classList.toggle('s-cards', p > 0.78); sec.classList.toggle('s-start', p < 0.04);
+    let want = Math.round(1 + p * (HERO.n - 1));
+    let img = null;
+    for (let d = 0; d < HERO.n && !img; d++) img = HERO.imgs[want - d] || HERO.imgs[want + d] || null;
+    if (!img) return;
+    const dpr = Math.min(2, devicePixelRatio || 1), w = cv.clientWidth, h = cv.clientHeight;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const g = cv.getContext('2d'), phone = innerWidth < 700;
+    // desktop: fill the screen; phone: show the whole scene in the top half, text sits below
+    const s2 = phone ? (cv.width * 1.45) / img.width : Math.max(cv.width / img.width, cv.height / img.height);
+    const dw = img.width * s2, dh = img.height * s2;
+    // phones: keep the vault + chips in frame; desktop: slide the scene right so the headline has room
+    const x = phone ? (cv.width - dw) * 0.6 : (cv.width - dw) / 2 + cv.width * Math.min(0.16, p * 0.32);
+    const y = phone ? cv.height * 0.1 : (cv.height - dh) / 2;
+    g.fillStyle = '#121417'; g.fillRect(0, 0, cv.width, cv.height);
+    g.drawImage(img, x, y, dw, dh);
+    if (phone) { const f = g.createLinearGradient(0, y + dh * 0.7, 0, y + dh); f.addColorStop(0, 'rgba(18,20,23,0)'); f.addColorStop(1, '#121417'); g.fillStyle = f; g.fillRect(0, y + dh * 0.7, cv.width, dh * 0.3 + 1); }
+    if (x > 0) { // feather the left edge into the page colour
+      const fade = g.createLinearGradient(x, 0, x + dw * 0.3, 0);
+      fade.addColorStop(0, '#121417'); fade.addColorStop(1, 'rgba(18,20,23,0)');
+      g.fillStyle = fade; g.fillRect(x - 1, 0, dw * 0.3 + 1, cv.height);
+    }
+  }
+  function heroTick() { if (!HERO.raf) HERO.raf = requestAnimationFrame(heroDraw); }
+  window.addEventListener('scroll', heroTick, { passive: true });
+  window.addEventListener('resize', heroTick);
+
+  function heroScroll(cta) {
+    const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+    const card = (icon, title, text) => `<div class="glass">${ico(icon)}<strong>${title}</strong><span>${text}</span></div>`;
+    return `<section class="hscroll ${reducedMotion() ? 'still' : ''}" aria-label="Vault">
+      <div class="hscroll-stage">
+        <canvas class="hscroll-canvas" aria-hidden="true"></canvas>
+        <div class="hscroll-shade" aria-hidden="true"></div>
+        <div class="hscroll-hint" aria-hidden="true"><span>Fantasy football for your habits</span><i></i><small>Scroll to unlock</small></div>
+        <div class="hscroll-copy">
+          <div class="eyebrow">Fantasy football for your habits</div>
+          <h1 class="hero-title">Bet on your habits.<br>Don’t finish last.</h1>
+          <p class="hero-sub">Start a league with friends, put chips on the habits you want to stick to, and prove it every day. Fewest chips at the end does the consequence you all agreed on.</p>
+          <button class="hero-cta" ${cta}>Start a league</button>
+          <p class="no-money">Chips only. No real money. Ever.</p>
+        </div>
+        <div class="hscroll-cards">
+          ${card('<path d="M8 11V6a4 4 0 0 1 8 0v5"/><rect x="5" y="11" width="14" height="10" rx="2"/>', 'Agree on the stakes', 'Your group votes on the loser’s consequence before day one.')}
+          ${card('<ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 7v4c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 11v4c0 1.7 3.6 3 8 3s8-1.3 8-3v-4"/>', 'Bet your chips', '10 chips a day across your habits. Miss one, lose its chips.')}
+          ${card('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', 'Prove it daily', 'A live photo challenge each day. Friends can call sus.')}
+        </div>
+      </div>
+    </section>`;
+  }
+
   // ---------- hero (pure CSS 3D chips) ----------
   function heroHtml(cta, alt) {
     const chip3 = (top) => `<div class="c3" style="top:${top}px"><div class="bot"></div><div class="side"></div><div class="top"></div></div>`;
@@ -917,7 +991,7 @@
   }
 
   function realSignup() {
-    return `${heroHtml('data-action="hero-focus-name"')}
+    return `${heroScroll('data-action="hero-focus-name"')}
       <div class="card mt"><form data-form="cloud-signup">
         <label>Your name <span class="hint">what your friends will see</span><input name="name" maxlength="30" required autocomplete="nickname" placeholder="e.g. Jarred" value="${esc(state.settings.name || '')}"></label>
         <p class="small muted mb0">No email or password. Your spot is saved on this phone, so use the same phone and browser each time.</p>
@@ -1272,6 +1346,7 @@
 
   async function afterRender() {
     animateCounts();
+    if (app.querySelector('.hscroll')) { heroLoad(); heroDraw(); }
     mountHero3d();
     if (ui.tab === 'league') animateReel();
     const xp = app.querySelector('[data-xp]');
