@@ -927,3 +927,34 @@ body.onboarding { padding-bottom: 0; }
   .hscroll-cards { display: none; }
   .hscroll.still .hscroll-copy { transform: none; }
 }
+
+/* ---------- Cinematic intro (auto-plays once per visit, fades into home) ---------- */
+.intro { position: fixed; inset: 0; z-index: 100; background: #121417; display: grid; place-items: center; transition: opacity 1s ease; }
+.intro.out { opacity: 0; pointer-events: none; }
+.intro-video { width: 100%; height: 100%; object-fit: cover; object-position: 100% 50%; }
+.intro-skip { position: absolute; right: 1.1rem; bottom: calc(1.1rem + env(safe-area-inset-bottom)); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); color: #c9ced5; border-radius: 999px; padding: .4rem .9rem; font-size: .8rem; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.intro-skip:hover { background: rgba(255,255,255,.12); color: #fff; }
+body.intro-on { overflow: hidden; }
+body.intro-on .anim { animation-play-state: paused; }
+
+/* ---------- Home hero: the intro's last frame ---------- */
+.hstill { position: relative; width: 100vw; margin-left: calc(50% - 50vw); margin-top: -1.5rem; margin-bottom: 1.5rem; height: 100vh; height: 100svh; min-height: 560px; overflow: hidden; background: #121417; }
+.hstill-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 100% 50%; }
+.hstill-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(10,11,13,.55) 0%, transparent 45%), linear-gradient(0deg, rgba(10,11,13,.85) 0%, transparent 28%); }
+.hstill-copy { position: absolute; left: max(1.25rem, calc(50vw - 440px)); top: 50%; transform: translateY(-55%); max-width: 470px; }
+.hstill-copy .eyebrow { color: #9aa0a8; margin-bottom: .8rem; }
+.hstill-cards { position: absolute; left: 50%; bottom: 5vh; width: min(880px, calc(100vw - 2.5rem)); transform: translateX(-50%); display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
+@media (max-width: 760px) {
+  .hstill { height: auto; min-height: 0; overflow: visible; }
+  .hstill-bg { position: relative; height: 58vh; object-fit: cover; object-position: 88% 50%;
+    -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent); mask-image: linear-gradient(180deg, #000 70%, transparent); }
+  .hstill-shade { display: none; }
+  .hstill-copy { position: relative; left: auto; top: auto; transform: none; max-width: none; padding: 0 1.25rem; margin-top: -3rem; }
+  .hstill-cards { position: relative; left: auto; bottom: auto; transform: none; width: auto; grid-template-columns: 1fr; padding: 1.25rem 1.25rem 0; }
+  .intro-video { object-position: 80% 50%; }
+}
+/* desktop: nudge the scene right so the headline never touches the dial; same on video + still so the fade is seamless */
+@media (min-width: 761px) {
+  .intro-video, .hstill-bg { transform: translateX(7%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16%); mask-image: linear-gradient(90deg, transparent 0, #000 16%); }
+}

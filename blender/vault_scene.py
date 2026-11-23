@@ -53,7 +53,7 @@ M_CHIP = principled('ChipBlack', '#0e0f11', 0.38, coat=0.6, coat_rough=0.22, noi
 M_TI = principled('Titanium', '#c2c7ce', 0.27, metal=1.0, aniso=0.6, noise_bump=0.05)
 M_TI_DARK = principled('TitaniumDark', '#5a5f66', 0.32, metal=1.0, aniso=0.4)
 M_INSERT = principled('ChipInsert', '#9298a0', 0.38, metal=1.0, aniso=0.5, noise_bump=0.05)
-M_FLOOR = principled('Floor', '#07080a', 0.4, coat=0.15, coat_rough=0.3, noise_bump=0.05)
+M_FLOOR = principled('Floor', '#060708', 0.26, coat=0.1, coat_rough=0.2, noise_bump=0.03)
 
 # ---------- helpers ----------
 def smooth(obj, bevel=0.0, segs=4):
@@ -162,6 +162,7 @@ for j in range(len(prof) - 1):
     bm.faces.new((rows[0][j], rows[1][j], rows[1][j + 1], rows[0][j + 1]))
 bm.to_mesh(me); bm.free()
 sweep = bpy.data.objects.new('Sweep', me); scene.collection.objects.link(sweep); smooth(mat(sweep, M_FLOOR))
+SWEEP = sweep
 
 # ---------- lighting: studio softboxes ----------
 def area(name, loc, rot, size, power, color='#ffffff', shape='RECTANGLE', size_y=None):
@@ -174,6 +175,14 @@ key = area('Key', (1.6, -3.2, 5.0), (0, 0, 0), 4.0, 900, '#f4f6fa', size_y=2.0);
 rim = area('Rim', (-3.5, 3.0, 3.0), (0, 0, 0), 1.0, 550, '#dfe7f2', size_y=5.0); aim(rim, (0.2, -0.6, 0))
 rim2 = area('Rim2', (4.5, 2.5, 2.5), (0, 0, 0), 0.8, 380, '#e6ebf2', size_y=4.0); aim(rim2, (1.0, -0.6, -0.4))
 fill = area('Fill', (-4.0, -6.0, 1.0), (0, 0, 0), 6.0, 60, '#cfd6df'); aim(fill, (0.3, -0.6, 0))
+# the key light lights the vault and chips but not the floor: no hazy hotspot, crisper image
+try:
+    recv = bpy.data.collections.new('KeyReceivers')
+    key.light_linking.receiver_collection = recv; fill.light_linking.receiver_collection = recv; rim.light_linking.receiver_collection = recv
+    recv.objects.link(SWEEP)
+    recv.collection_objects[0].light_linking.link_state = 'EXCLUDE'  # the only entry is the floor sweep
+except Exception as e:
+    print('light linking unavailable', e)
 
 # world: almost black for lighting, but the camera sees the page colour (#121417)
 w = bpy.data.worlds.new('World'); scene.world = w; w.use_nodes = True
@@ -187,10 +196,10 @@ nt.links.new(mix.outputs[0], out.inputs['Surface'])
 # ---------- camera ----------
 cam_data = bpy.data.cameras.new('Cam'); cam_data.lens = 62
 cam = bpy.data.objects.new('Cam', cam_data); scene.collection.objects.link(cam); scene.camera = cam
-cam.location = (1.1, -12.8, 1.7)
-cam_target = empty('CamTarget', (0.55, -0.6, -0.1))
+cam.location = (0.3, -14.2, 1.8)
+cam_target = empty('CamTarget', (-1.0, -0.6, -0.1))
 tc = cam.constraints.new('TRACK_TO'); tc.target = cam_target; tc.track_axis = 'TRACK_NEGATIVE_Z'; tc.up_axis = 'UP_Y'
-cam_data.dof.use_dof = True; cam_data.dof.focus_object = hero; cam_data.dof.aperture_fstop = 4.0
+cam_data.dof.use_dof = False  # crisp, no lens blur
 
 # ---------- animation: darkness → light sweep → unlock → reveal ----------
 stack = [o for o in scene.objects if o.name.startswith('Stack')]
@@ -208,7 +217,7 @@ if ANIM or FRAME:
     k(ticks, 'rotation_euler', 1, -math.tau * 1.25, 2); k(ticks, 'rotation_euler', 38, 0.0, 2)
     k(handle, 'rotation_euler', 40, 0.0, 2); k(handle, 'rotation_euler', 56, math.pi / 2, 2)
     # camera: close on the dial, then glides back to the wide shot
-    for f, loc, tgt in ((1, (-0.55, -5.2, 0.85), (-0.15, -0.9, 0.22)), (40, (-0.35, -6.6, 1.05), (-0.05, -0.85, 0.15)), (FRAMES, (1.1, -12.8, 1.7), (0.55, -0.6, -0.1))):
+    for f, loc, tgt in ((1, (-0.55, -5.2, 0.85), (-0.15, -0.9, 0.22)), (40, (-0.35, -6.6, 1.05), (-0.05, -0.85, 0.15)), (FRAMES, (0.3, -14.2, 1.8), (-1.0, -0.6, -0.1))):
         cam.location = loc; cam.keyframe_insert('location', frame=f)
         cam_target.location = tgt; cam_target.keyframe_insert('location', frame=f)
     # chips drop onto the stack one by one, then the hero chip descends
@@ -226,6 +235,9 @@ if ANIM or FRAME:
                 for fc in o.animation_data.action.fcurves:
                     for kp in fc.keyframe_points: kp.interpolation = 'BEZIER'; kp.easing = 'EASE_OUT'
             except Exception: pass
+
+if arg('--mute', ''):  # debugging: render without one light
+    bpy.data.objects[arg('--mute', '')].hide_render = True
 
 # ---------- collision check: no chip may pass through the vault door ----------
 if '--check' in argv:
@@ -261,7 +273,8 @@ except Exception as e:
 scene.cycles.samples = SAMPLES
 scene.cycles.use_adaptive_sampling = True
 scene.cycles.use_denoising = True
-scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = 1600, 1000, PCT
+scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = int(arg('--w', '1600')), int(arg('--h', '1000')), PCT
+scene.cycles.adaptive_threshold = 0.02
 for vt, look in (('AgX', 'AgX - Medium High Contrast'), ('AgX', 'Medium High Contrast'), ('Filmic', 'Medium High Contrast')):
     try:
         scene.view_settings.view_transform = vt
@@ -276,7 +289,7 @@ scene.render.filepath = OUT
 if SAVE:
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(__file__), 'vault_hero.blend'))
 if ANIM:
-    scene.render.image_settings.file_format = 'JPEG'; scene.render.image_settings.quality = 78
+    scene.render.image_settings.file_format = 'PNG'; scene.render.image_settings.color_depth = '8'; scene.render.image_settings.compression = 30
     scene.render.filepath = os.path.join(os.path.dirname(OUT), '')
     bpy.ops.render.render(animation=True)
 else:

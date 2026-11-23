@@ -214,7 +214,7 @@
   function render() {
     Core.tick(state, now());
     const views = { today, prove, bets, league, vault, ledger, learn, settings };
-    const onboarding = !state.settings.onboarded && !cloud.joinCode;
+    const onboarding = needsSetup();
     document.body.classList.toggle('onboarding', onboarding);
     if (onboarding) { app.innerHTML = welcome(); sheetRoot.innerHTML = ''; afterRender(); return; }
     if (ui.tab !== 'league' && cloud.current) { Cloud.unsubscribe(); cloud.current = null; cloud.data = null; }
@@ -316,76 +316,53 @@
     </div>`;
   }
 
-  // ---------- scroll hero: Blender-rendered frames scrubbed by scroll (Apple / Igloo style) ----------
-  const HERO = { n: 96, path: (i) => `assets/hero/${String(i).padStart(4, '0')}.jpg?v=2`, imgs: [], step: 1, started: false, raf: 0 };
-  function heroLoad() {
-    if (HERO.started) return; HERO.started = true;
-    const small = innerWidth < 700 || (navigator.connection && navigator.connection.saveData);
-    HERO.step = small ? 2 : 1;
-    const order = [HERO.n];                                  // last frame first (reduced motion / fallback)
-    for (let i = 1; i <= HERO.n; i += HERO.step) order.push(i);
-    order.forEach((i, k) => {
-      const img = new Image(); img.decoding = 'async';
-      img.onload = () => { HERO.imgs[i] = img; if (k < 2) heroDraw(); };
-      setTimeout(() => { img.src = HERO.path(i); }, k < 2 ? 0 : 30 + k * 12);
-    });
+  // ---------- cinematic intro: Blender-rendered video plays once per visit, then fades into home ----------
+  const HERO_V = 4;
+  function playIntro() {
+    let seen = false; try { seen = sessionStorage.getItem('vault.intro') === '1'; } catch (e) { /* private mode */ }
+    if (seen || reducedMotion()) return;
+    window.scrollTo({ top: 0 });
+    try { sessionStorage.setItem('vault.intro', '1'); } catch (e) { /* ignore */ }
+    const el = document.createElement('div');
+    el.className = 'intro'; el.setAttribute('role', 'presentation');
+    el.innerHTML = `<video class="intro-video" muted playsinline autoplay preload="auto" src="assets/hero/${(screen.width * (devicePixelRatio || 1)) >= 2200 && !(navigator.connection && navigator.connection.saveData) ? 'intro-4k' : 'intro-1080'}.mp4?v=${HERO_V}"></video>
+      <button class="intro-skip" type="button">Skip</button>`;
+    document.body.appendChild(el); document.body.classList.add('intro-on');
+    const v = el.querySelector('video');
+    let finished = false;
+    const done = () => {
+      if (finished) return; finished = true;
+      el.classList.add('out'); document.body.classList.remove('intro-on');
+      setTimeout(() => el.remove(), 1100);
+    };
+    v.addEventListener('timeupdate', () => { if (v.duration && v.currentTime > v.duration - 0.45) done(); });
+    v.addEventListener('ended', done); v.addEventListener('error', done);
+    el.querySelector('.intro-skip').addEventListener('click', done);
+    const p = v.play(); if (p && p.catch) p.catch(done);
+    setTimeout(done, 9000); // never trap anyone
   }
-  function heroProgress(sec) {
-    if (reducedMotion()) return 1;
-    const r = sec.getBoundingClientRect(), span = r.height - innerHeight;
-    return span > 0 ? Math.min(1, Math.max(0, -r.top / span)) : 1;
-  }
-  function heroDraw() {
-    HERO.raf = 0;
-    const sec = app.querySelector('.hscroll'); if (!sec) return;
-    const cv = sec.querySelector('canvas'), p = heroProgress(sec);
-    sec.classList.toggle('s-copy', p > 0.5); sec.classList.toggle('s-cards', p > 0.78); sec.classList.toggle('s-start', p < 0.04);
-    let want = Math.round(1 + p * (HERO.n - 1));
-    let img = null;
-    for (let d = 0; d < HERO.n && !img; d++) img = HERO.imgs[want - d] || HERO.imgs[want + d] || null;
-    if (!img) return;
-    const dpr = Math.min(2, devicePixelRatio || 1), w = cv.clientWidth, h = cv.clientHeight;
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
-    const g = cv.getContext('2d'), phone = innerWidth < 700;
-    // desktop: fill the screen; phone: show the whole scene in the top half, text sits below
-    const s2 = phone ? (cv.width * 1.45) / img.width : Math.max(cv.width / img.width, cv.height / img.height);
-    const dw = img.width * s2, dh = img.height * s2;
-    // phones: keep the vault + chips in frame; desktop: slide the scene right so the headline has room
-    const x = phone ? (cv.width - dw) * 0.6 : (cv.width - dw) / 2 + cv.width * Math.min(0.16, p * 0.32);
-    const y = phone ? cv.height * 0.1 : (cv.height - dh) / 2;
-    g.fillStyle = '#121417'; g.fillRect(0, 0, cv.width, cv.height);
-    g.drawImage(img, x, y, dw, dh);
-    if (phone) { const f = g.createLinearGradient(0, y + dh * 0.7, 0, y + dh); f.addColorStop(0, 'rgba(18,20,23,0)'); f.addColorStop(1, '#121417'); g.fillStyle = f; g.fillRect(0, y + dh * 0.7, cv.width, dh * 0.3 + 1); }
-    if (x > 0) { // feather the left edge into the page colour
-      const fade = g.createLinearGradient(x, 0, x + dw * 0.3, 0);
-      fade.addColorStop(0, '#121417'); fade.addColorStop(1, 'rgba(18,20,23,0)');
-      g.fillStyle = fade; g.fillRect(x - 1, 0, dw * 0.3 + 1, cv.height);
-    }
-  }
-  function heroTick() { if (!HERO.raf) HERO.raf = requestAnimationFrame(heroDraw); }
-  window.addEventListener('scroll', heroTick, { passive: true });
-  window.addEventListener('resize', heroTick);
 
-  function heroScroll(cta) {
+  // Home hero: the intro's final frame, so the fade-in is seamless
+  function heroStill() {
+    const solo = (state.settings.profile || {}).mode === 'solo';
+    const cta = solo ? 'data-action="hero-solo"' : 'data-action="hero-start"';
+    const label = solo ? 'Place my first bet' : 'Start a league';
     const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-    const card = (icon, title, text) => `<div class="glass">${ico(icon)}<strong>${title}</strong><span>${text}</span></div>`;
-    return `<section class="hscroll ${reducedMotion() ? 'still' : ''}" aria-label="Vault">
-      <div class="hscroll-stage">
-        <canvas class="hscroll-canvas" aria-hidden="true"></canvas>
-        <div class="hscroll-shade" aria-hidden="true"></div>
-        <div class="hscroll-hint" aria-hidden="true"><span>Fantasy football for your habits</span><i></i><small>Scroll to unlock</small></div>
-        <div class="hscroll-copy">
-          <div class="eyebrow">Fantasy football for your habits</div>
-          <h1 class="hero-title">Bet on your habits.<br>Don’t finish last.</h1>
-          <p class="hero-sub">Start a league with friends, put chips on the habits you want to stick to, and prove it every day. Fewest chips at the end does the consequence you all agreed on.</p>
-          <button class="hero-cta" ${cta}>Start a league</button>
-          <p class="no-money">Chips only. No real money. Ever.</p>
-        </div>
-        <div class="hscroll-cards">
-          ${card('<path d="M8 11V6a4 4 0 0 1 8 0v5"/><rect x="5" y="11" width="14" height="10" rx="2"/>', 'Agree on the stakes', 'Your group votes on the loser’s consequence before day one.')}
-          ${card('<ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 7v4c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 11v4c0 1.7 3.6 3 8 3s8-1.3 8-3v-4"/>', 'Bet your chips', '10 chips a day across your habits. Miss one, lose its chips.')}
-          ${card('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', 'Prove it daily', 'A live photo challenge each day. Friends can call sus.')}
-        </div>
+    const card = (d, icon, title, text) => `<div class="glass anim" style="--d:${d}s">${ico(icon)}<strong>${title}</strong><span>${text}</span></div>`;
+    return `<section class="hstill" aria-label="Vault">
+      <img class="hstill-bg" srcset="assets/hero/final-1920.jpg?v=${HERO_V} 1920w, assets/hero/final-4k.jpg?v=${HERO_V} 3840w" sizes="100vw" src="assets/hero/final-1920.jpg?v=${HERO_V}" alt="" aria-hidden="true">
+      <div class="hstill-shade" aria-hidden="true"></div>
+      <div class="hstill-copy">
+        <div class="eyebrow anim" style="--d:.15s">Fantasy football for your habits</div>
+        <h1 class="hero-title anim" style="--d:.25s">Bet on your habits.<br>Don’t finish last.</h1>
+        <p class="hero-sub anim" style="--d:.37s">Start a league with friends, put chips on the habits you want to stick to, and prove it every day. Fewest chips at the end does the consequence you all agreed on.</p>
+        <div class="anim" style="--d:.49s"><button class="hero-cta" ${cta}>${label}</button></div>
+        <p class="no-money anim" style="--d:.6s">Chips only. No real money. Ever.</p>
+      </div>
+      <div class="hstill-cards">
+        ${card(0.7, '<path d="M8 11V6a4 4 0 0 1 8 0v5"/><rect x="5" y="11" width="14" height="10" rx="2"/>', 'Agree on the stakes', 'Your group votes on the loser’s consequence before day one.')}
+        ${card(0.82, '<ellipse cx="12" cy="7" rx="8" ry="3"/><path d="M4 7v4c0 1.7 3.6 3 8 3s8-1.3 8-3V7"/><path d="M4 11v4c0 1.7 3.6 3 8 3s8-1.3 8-3v-4"/>', 'Bet your chips', '10 chips a day across your habits. Miss one, lose its chips.')}
+        ${card(0.94, '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>', 'Prove it daily', 'A live photo challenge each day. Friends can call sus.')}
       </div>
     </section>`;
   }
@@ -448,16 +425,19 @@
     return `<section class="ob" aria-live="polite">${top}<div class="ob-body anim" style="--d:0s" key="${ob.step}">${body}</div>
       <button class="ob-skip" data-action="ob-skip">Skip setup</button></section>`;
   }
+  function needsSetup() { return !state.settings.profile && !state.settings.setupSkipped; }
   function finishSetup(skip) {
     state.settings.onboarded = true;
+    if (skip) state.settings.setupSkipped = true;
     if (!skip) {
       state.settings.profile = { goals: ob.goals.slice(), mode: ob.mode || 'friends', level: ob.level || 'steady' };
       if (ob.name) state.settings.name = ob.name;
     }
     Storage.save(state);
-    const mode = (state.settings.profile || {}).mode;
-    if (!skip && mode === 'solo') { ui.prefillBet = myIdeas()[0]; setTab('bets'); } else setTab('league');
+    ui.lgMode = null; cloud.current = null;
+    setTab('league');
     window.scrollTo({ top: 0 });
+    playIntro(); // the cinematic reveal, straight after the setup questions
   }
 
   // ---------- views ----------
@@ -982,7 +962,7 @@
     if (ui.lgMode === 'demo') return lg ? demoLeague() : leagueSetup();
     cloudBoot();
     const head = (sub) => `<div class="page-head"><div><h1>League</h1><p class="muted">${sub}</p></div></div>`;
-    if (!cloud.ready) return head('Loading your leagues…') + '<div class="card"><p class="mb0 muted">Connecting…</p></div>';
+    if (!cloud.ready) return heroStill() + '<div class="card"><p class="mb0 muted">Loading your leagues…</p></div>';
     if (!Cloud.available()) return head('Play with real friends') + `<div class="card"><p>Can't reach the league server right now. Check your connection and reload.</p><button data-action="lg-mode" data-m="demo">Try the demo instead</button></div>`;
     if (!Cloud.profile()) return realSignup();
     if (cloud.joinCode) return realJoin();
@@ -991,7 +971,7 @@
   }
 
   function realSignup() {
-    return `${heroScroll('data-action="hero-focus-name"')}
+    return `${heroStill()}
       <div class="card mt"><form data-form="cloud-signup">
         <label>Your name <span class="hint">what your friends will see</span><input name="name" maxlength="30" required autocomplete="nickname" placeholder="e.g. Jarred" value="${esc(state.settings.name || '')}"></label>
         <p class="small muted mb0">No email or password. Your spot is saved on this phone, so use the same phone and browser each time.</p>
@@ -1017,7 +997,7 @@
   function realHome() {
     const ls = cloud.leagues || [];
     const status = (g) => !g.starts_on ? 'Lobby · waiting to start' : g.result ? 'Season over' : 'In season';
-    return `<div class="page-head"><div><h1>League</h1><p class="muted">Signed in as <strong>${esc(Cloud.profile().name)}</strong></p></div></div>
+    return `${heroStill()}<div class="page-head" id="league-home"><div><h1>Your leagues</h1><p class="muted">Signed in as <strong>${esc(Cloud.profile().name)}</strong></p></div></div>
       ${ls.length ? `<div class="stack">${ls.map(g => `<button class="quick-prove" data-action="cl-open" data-id="${g.id}">
           <span class="qp-main"><span class="qp-title">${esc(g.name)}</span><span class="small muted">${status(g)} · ${League.PUNISHMENTS[g.tier].label}</span></span>
           <span class="qp-go" aria-hidden="true">›</span></button>`).join('')}</div>` : ''}
@@ -1346,7 +1326,6 @@
 
   async function afterRender() {
     animateCounts();
-    if (app.querySelector('.hscroll')) { heroLoad(); heroDraw(); }
     mountHero3d();
     if (ui.tab === 'league') animateReel();
     const xp = app.querySelector('[data-xp]');
@@ -1522,7 +1501,7 @@
       case 'ob-back': ob.step = Math.max(0, ob.step - 1); render(); break;
       case 'ob-skip': finishSetup(true); break;
       case 'ob-finish': Sfx.stake(); finishSetup(false); break;
-      case 'redo-setup': state.settings.onboarded = false; Object.assign(ob, { step: 0, goals: [], mode: null, level: null }); Storage.save(state); render(); window.scrollTo({ top: 0 }); break;
+      case 'redo-setup': state.settings.onboarded = false; delete state.settings.profile; delete state.settings.setupSkipped; try { sessionStorage.removeItem('vault.intro'); } catch (e) { /* ignore */ } Object.assign(ob, { step: 0, goals: [], mode: null, level: null }); Storage.save(state); render(); window.scrollTo({ top: 0 }); break;
       case 'refill': tryRun(() => Core.grant(state, 100 - state.wallet.credits, now(), 'Refill'), 'Refilled to 100 chips.'); break;
       case 'goal-idea': {
         const form = btn.closest('form'); if (!form) break;
@@ -1531,6 +1510,12 @@
         form.elements['t' + slot].value = btn.dataset.g; rebalance(form); Sfx.chip(); break;
       }
       case 'cl-vote-cons': cloudDo(() => Cloud.voteConsequence(cloud.current, btn.dataset.c), 'Vote locked in.').then(refreshLeague); break;
+      case 'hero-start': {
+        const n = app.querySelector('form[data-form="cloud-signup"] input[name="name"]') || app.querySelector('form[data-form="cloud-create"] input[name="name"]');
+        if (n) { n.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => n.focus({ preventScroll: true }), 450); }
+        break;
+      }
+      case 'hero-solo': ui.prefillBet = myIdeas()[0]; setTab('bets'); break;
       case 'hero-focus-name': { const n = app.querySelector('form[data-form="cloud-signup"] input[name="name"]'); if (n) { n.scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => n.focus(), 350); } break; }
       case 'lg-mode': ui.lgMode = btn.dataset.m || null; if (ui.lgMode !== 'demo') cloudBoot(); render(); window.scrollTo({ top: 0 }); break;
       case 'cl-cancel-join': cloud.joinCode = null; cloud.preview = null; history.replaceState(null, '', '#league'); render(); break;
@@ -1818,9 +1803,9 @@
     }
     state.settings.lastSeenAt = t;
     state.settings.simple = true; // misses just cost chips (no vault / comebacks)
-    if (state.settings.onboarded == null && state.bets.length) state.settings.onboarded = true;
     Storage.save(state);
     setTab(location.hash.slice(1) || 'league');
+    if (!needsSetup()) playIntro(); // new users see it right after the setup questions instead
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
