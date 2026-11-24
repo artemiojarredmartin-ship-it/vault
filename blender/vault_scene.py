@@ -51,6 +51,7 @@ def principled(name, color, rough, metal=0.0, coat=0.0, coat_rough=0.3, aniso=0.
 M_BLACK = principled('MatteBlack', '#0c0d0f', 0.48, coat=0.35, coat_rough=0.35, noise_bump=0.15)
 M_CHIP = principled('ChipBlack', '#0e0f11', 0.38, coat=0.6, coat_rough=0.22, noise_bump=0.08)
 M_TI = principled('Titanium', '#c2c7ce', 0.27, metal=1.0, aniso=0.6, noise_bump=0.05)
+M_TICK = principled('Tick', '#c2c7ce', 0.24, metal=1.0)  # clean polish: no grain/aniso on tiny parts (was shimmering)
 M_TI_DARK = principled('TitaniumDark', '#5a5f66', 0.32, metal=1.0, aniso=0.4)
 M_INSERT = principled('ChipInsert', '#9298a0', 0.38, metal=1.0, aniso=0.5, noise_bump=0.05)
 M_FLOOR = principled('Floor', '#060708', 0.26, coat=0.1, coat_rough=0.2, noise_bump=0.03)
@@ -123,7 +124,7 @@ ticks = empty('Ticks'); parent(ticks, dial)
 for i in range(60):
     big = i % 5 == 0; a = i / 60 * math.tau; rr = 1.095 if big else 1.12
     t = box(0.026 if big else 0.012, 0.13 if big else 0.065, 0.012, loc=(math.sin(a) * rr, math.cos(a) * rr, 0.123), rot=(0, 0, -a))
-    parent(mat(t, M_TI), ticks)
+    parent(smooth(mat(t, M_TICK), bevel=0.004, segs=3), ticks)
 handle = empty('Handle'); parent(handle, dial)
 bpy.ops.mesh.primitive_cone_add(vertices=96, radius1=0.3, radius2=0.25, depth=0.22, location=(0, 0, 0.23))
 parent(smooth(mat(bpy.context.active_object, M_TI), bevel=0.02), handle)
@@ -275,6 +276,8 @@ scene.cycles.use_adaptive_sampling = True
 scene.cycles.use_denoising = True
 scene.render.resolution_x, scene.render.resolution_y, scene.render.resolution_percentage = int(arg('--w', '1600')), int(arg('--h', '1000')), PCT
 scene.cycles.adaptive_threshold = 0.02
+scene.cycles.blur_glossy = 0.5  # 'filter glossy': kills sparkle noise on polished edges
+scene.cycles.sample_clamp_indirect = 8
 for vt, look in (('AgX', 'AgX - Medium High Contrast'), ('AgX', 'Medium High Contrast'), ('Filmic', 'Medium High Contrast')):
     try:
         scene.view_settings.view_transform = vt

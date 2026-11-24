@@ -316,30 +316,57 @@
     </div>`;
   }
 
-  // ---------- cinematic intro: Blender-rendered video plays once per visit, then fades into home ----------
-  const HERO_V = 4;
+  // ---------- cinematic intro ----------
+  // The Blender film plays INSIDE the home hero, start to finish, untouched. When its last
+  // frame lands it simply stays there (that frame is the hero), and only the headline,
+  // button and cards fade in around it. No overlay, no swap, so nothing can jump.
+  const HERO_V = 7;
+  const intro = { video: null, phase: 'off' }; // off | playing | done
   function playIntro() {
     let seen = false; try { seen = sessionStorage.getItem('vault.intro') === '1'; } catch (e) { /* private mode */ }
-    if (seen || reducedMotion()) return;
-    window.scrollTo({ top: 0 });
+    if (seen || reducedMotion() || ui.tab !== 'league' || needsSetup()) return;
     try { sessionStorage.setItem('vault.intro', '1'); } catch (e) { /* ignore */ }
-    const el = document.createElement('div');
-    el.className = 'intro'; el.setAttribute('role', 'presentation');
-    el.innerHTML = `<video class="intro-video" muted playsinline autoplay preload="auto" src="assets/hero/${(screen.width * (devicePixelRatio || 1)) >= 2200 && !(navigator.connection && navigator.connection.saveData) ? 'intro-4k' : 'intro-1080'}.mp4?v=${HERO_V}"></video>
-      <button class="intro-skip" type="button">Skip</button>`;
-    document.body.appendChild(el); document.body.classList.add('intro-on');
-    const v = el.querySelector('video');
-    let finished = false;
-    const done = () => {
-      if (finished) return; finished = true;
-      el.classList.add('out'); document.body.classList.remove('intro-on');
-      setTimeout(() => el.remove(), 1100);
+    window.scrollTo({ top: 0 });
+    const big = (screen.width * (devicePixelRatio || 1)) >= 2200 && !(navigator.connection && navigator.connection.saveData);
+    const v = document.createElement('video');
+    v.className = 'hstill-film'; v.muted = true; v.playsInline = true; v.preload = 'auto';
+    v.setAttribute('muted', ''); v.setAttribute('playsinline', ''); v.setAttribute('aria-hidden', 'true');
+    v.src = `assets/hero/${big ? 'intro-4k' : 'intro-1080'}.mp4?v=${HERO_V}`;
+    intro.video = v; intro.phase = 'playing';
+    document.body.classList.add('intro-on');
+    const skip = document.createElement('button');
+    skip.className = 'intro-skip'; skip.type = 'button'; skip.textContent = 'Skip';
+    document.body.appendChild(skip);
+    let safety;
+    const done = (jump) => {
+      if (intro.phase !== 'playing') return; intro.phase = 'done'; clearTimeout(safety);
+      if (jump && v.duration) { v.pause(); v.currentTime = v.duration; } // Skip: jump to the final frame
+      skip.remove();
+      document.body.classList.remove('intro-on'); document.body.classList.add('intro-reveal');
+      setTimeout(() => document.body.classList.remove('intro-reveal'), 5000);
     };
-    v.addEventListener('timeupdate', () => { if (v.duration && v.currentTime > v.duration - 0.45) done(); });
-    v.addEventListener('ended', done); v.addEventListener('error', done);
-    el.querySelector('.intro-skip').addEventListener('click', done);
-    const p = v.play(); if (p && p.catch) p.catch(done);
-    setTimeout(done, 9000); // never trap anyone
+    v.addEventListener('ended', () => done(false));
+    v.addEventListener('error', () => done(true));
+    skip.addEventListener('click', () => done(true));
+    safety = setTimeout(() => done(true), 15000); // very slow network: never trap anyone
+    // start only once it can play straight through, so every frame is shown
+    v.addEventListener('canplaythrough', () => {
+      if (intro.phase !== 'playing') return;
+      clearTimeout(safety); safety = setTimeout(() => done(true), ((v.duration || 4) + 3) * 1000);
+      const p = v.play(); if (p && p.catch) p.catch(() => done(true));
+    }, { once: true });
+    mountIntro();
+  }
+  // Called after every render: keep the one film element inside whatever hero is on screen
+  function mountIntro() {
+    const v = intro.video; if (!v) return;
+    const box = app.querySelector('.hstill-media');
+    if (!box) { if (intro.phase === 'playing') { v.pause(); } return; }
+    if (v.parentNode !== box) {
+      box.appendChild(v);
+      if (intro.phase === 'playing' && v.readyState >= 4) v.play().catch(() => {});
+      else if (intro.phase === 'done' && v.duration && !v.ended && v.paused) v.currentTime = v.duration;
+    }
   }
 
   // Home hero: the intro's final frame, so the fade-in is seamless
@@ -350,8 +377,7 @@
     const ico = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
     const card = (d, icon, title, text) => `<div class="glass anim" style="--d:${d}s">${ico(icon)}<strong>${title}</strong><span>${text}</span></div>`;
     return `<section class="hstill" aria-label="Vault">
-      <img class="hstill-bg" srcset="assets/hero/final-1920.jpg?v=${HERO_V} 1920w, assets/hero/final-4k.jpg?v=${HERO_V} 3840w" sizes="100vw" src="assets/hero/final-1920.jpg?v=${HERO_V}" alt="" aria-hidden="true">
-      <div class="hstill-shade" aria-hidden="true"></div>
+      <div class="hstill-media" aria-hidden="true"><img class="hstill-bg" srcset="assets/hero/final-1920.jpg?v=${HERO_V} 1920w, assets/hero/final-4k.jpg?v=${HERO_V} 3840w" sizes="100vw" src="assets/hero/final-1920.jpg?v=${HERO_V}" alt=""></div>
       <div class="hstill-copy">
         <div class="eyebrow anim" style="--d:.15s">Fantasy football for your habits</div>
         <h1 class="hero-title anim" style="--d:.25s">Bet on your habits.<br>Don’t finish last.</h1>
@@ -1325,6 +1351,8 @@
   window.addEventListener('hero3d-ready', mountHero3d);
 
   async function afterRender() {
+    mountIntro();
+    document.body.classList.toggle('hero-home', !!app.querySelector('.hstill'));
     animateCounts();
     mountHero3d();
     if (ui.tab === 'league') animateReel();
@@ -1805,6 +1833,7 @@
     state.settings.simple = true; // misses just cost chips (no vault / comebacks)
     Storage.save(state);
     setTab(location.hash.slice(1) || 'league');
+    window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 40), { passive: true });
     if (!needsSetup()) playIntro(); // new users see it right after the setup questions instead
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
       navigator.serviceWorker.register('sw.js').catch(() => {});

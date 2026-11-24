@@ -3,7 +3,9 @@ Run: /Applications/Blender.app/Contents/MacOS/Blender -b -P blender/make_video.p
 """
 import bpy, os
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-src = os.path.join(root, 'blender', 'renders', 'seq')
+import sys
+argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+src = argv[0] if argv else os.path.join(root, 'blender', 'renders', 'seq')
 files = sorted(f for f in os.listdir(src) if f.endswith('.png'))
 def encode(out, w, h):
     sc = bpy.context.scene
@@ -12,10 +14,16 @@ def encode(out, w, h):
     sc.sequence_editor_create()
     coll = sc.sequence_editor.strips if hasattr(sc.sequence_editor, 'strips') else sc.sequence_editor.sequences
     for st in list(coll): coll.remove(st)
+    # fps MUST be set before the strip exists: otherwise Blender times the frames at 24 fps,
+    # stretches them, and frame_end silently cuts off the last ~20% of the animation.
+    sc.render.fps, sc.render.fps_base = 30, 1.0
     strip = coll.new_image('frames', os.path.join(src, files[0]), 1, 1)
     for f in files[1:]: strip.elements.append(f)
+    if hasattr(strip, 'frame_final_duration'): strip.frame_final_duration = len(files)
     sc.frame_start, sc.frame_end = 1, len(files)
-    sc.render.fps = 30
+    # the PNGs are already graded (AgX) in the render; don't grade them a second time
+    sc.view_settings.view_transform = 'Standard'; sc.view_settings.look = 'None'
+    sc.view_settings.exposure = 0; sc.view_settings.gamma = 1
     sc.render.resolution_x, sc.render.resolution_y, sc.render.resolution_percentage = w, h, 100
     s = sc.render.image_settings
     try: s.media_type = 'VIDEO'
@@ -26,7 +34,7 @@ def encode(out, w, h):
     sc.render.ffmpeg.gopsize = 15
     sc.render.filepath = out
     bpy.ops.render.render(animation=True)
-    print('VIDEO', out)
+    print('VIDEO', out, 'strip frames', strip.frame_final_start, strip.frame_final_end)
 hero = os.path.join(root, 'assets', 'hero')
 encode(os.path.join(hero, 'intro-4k.mp4'), 3840, 2160)
 encode(os.path.join(hero, 'intro-1080.mp4'), 1920, 1080)

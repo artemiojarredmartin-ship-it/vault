@@ -810,7 +810,7 @@ input, textarea, select { background: #0f1113; }
 .glass span { color: #8b9098; font-size: .84rem; line-height: 1.4; }
 
 .anim { opacity: 0; transform: translateY(20px); animation: rise .7s cubic-bezier(.2,.8,.2,1) var(--d, 0s) forwards; }
-@keyframes rise { to { opacity: 1; transform: none; } }
+@keyframes rise { to { opacity: 1; transform: none; filter: none; } }
 @keyframes stack-in { from { opacity: 0; transform: translateX(-50%) scale(.9) translateY(12px); } to { opacity: 1; transform: translateX(-50%); } }
 @keyframes chip-drop3d { 0% { opacity: 0; transform: translateY(-60px) rotate(-8deg); } 25% { opacity: 1; } 100% { opacity: 1; transform: none; } }
 @keyframes chip-bob { 0%, 100% { transform: translateY(-6px); } 50% { transform: translateY(6px); } }
@@ -928,33 +928,33 @@ body.onboarding { padding-bottom: 0; }
   .hscroll.still .hscroll-copy { transform: none; }
 }
 
-/* ---------- Cinematic intro (auto-plays once per visit, fades into home) ---------- */
-.intro { position: fixed; inset: 0; z-index: 100; background: #121417; display: grid; place-items: center; transition: opacity 1s ease; }
-.intro.out { opacity: 0; pointer-events: none; }
-.intro-video { width: 100%; height: 100%; object-fit: cover; object-position: 100% 50%; }
-.intro-skip { position: absolute; right: 1.1rem; bottom: calc(1.1rem + env(safe-area-inset-bottom)); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); color: #c9ced5; border-radius: 999px; padding: .4rem .9rem; font-size: .8rem; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+/* ---------- Home hero + cinematic intro ----------
+   The film plays inside .hstill-media and stays on its last frame (= the still image under it).
+   Only the copy, cards and header fade in afterwards; the picture itself is never faded or moved. */
+.intro-skip { position: fixed; z-index: 50; right: 1.1rem; bottom: calc(1.1rem + env(safe-area-inset-bottom)); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); color: #c9ced5; border-radius: 999px; padding: .4rem .9rem; font-size: .8rem; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .intro-skip:hover { background: rgba(255,255,255,.12); color: #fff; }
 body.intro-on { overflow: hidden; }
 body.intro-on .anim { animation-play-state: paused; }
+body.intro-on .site-header, body.intro-on .tabs { opacity: 0; pointer-events: none; }
+body.intro-reveal .site-header, body.intro-reveal .tabs { transition: opacity 1.2s ease 1.8s; }
+body.intro-reveal .hstill .anim { filter: blur(8px); animation-duration: 1.4s; animation-timing-function: cubic-bezier(.16,1,.3,1); animation-delay: calc(var(--d, 0s) * 1.7 + .3s); }
+/* the header floats over the hero instead of pushing it down */
+body.hero-home .site-header { position: fixed; left: 0; right: 0; top: 0; background: transparent; border-color: transparent; }
+body.hero-home.scrolled .site-header { background: color-mix(in srgb, var(--bg) 92%, transparent); }
 
-/* ---------- Home hero: the intro's last frame ---------- */
 .hstill { position: relative; width: 100vw; margin-left: calc(50% - 50vw); margin-top: -1.5rem; margin-bottom: 1.5rem; height: 100vh; height: 100svh; min-height: 560px; overflow: hidden; background: #121417; }
-.hstill-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 100% 50%; }
-.hstill-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(10,11,13,.55) 0%, transparent 45%), linear-gradient(0deg, rgba(10,11,13,.85) 0%, transparent 28%); }
-.hstill-copy { position: absolute; left: max(1.25rem, calc(50vw - 440px)); top: 50%; transform: translateY(-55%); max-width: 470px; }
+.hstill-media { position: absolute; inset: 0; background: #121417; }
+/* anchored right: any crop on narrower screens comes off the empty left side, never the chips */
+.hstill-bg, .hstill-film { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 100% 50%; display: block; }
+.hstill-film { background: #121417; }
+.hstill-copy { position: absolute; left: clamp(1.25rem, 5vw, 6rem); top: 50%; transform: translateY(-55%); max-width: min(470px, 36vw); }
 .hstill-copy .eyebrow { color: #9aa0a8; margin-bottom: .8rem; }
 .hstill-cards { position: absolute; left: 50%; bottom: 5vh; width: min(880px, calc(100vw - 2.5rem)); transform: translateX(-50%); display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
 @media (max-width: 760px) {
   .hstill { height: auto; min-height: 0; overflow: visible; }
-  .hstill-bg { position: relative; height: 58vh; object-fit: cover; object-position: 88% 50%;
+  .hstill-media { position: relative; height: 58vh; background: transparent;
     -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent); mask-image: linear-gradient(180deg, #000 70%, transparent); }
-  .hstill-shade { display: none; }
+  .hstill-bg, .hstill-film { object-position: 88% 50%; }
   .hstill-copy { position: relative; left: auto; top: auto; transform: none; max-width: none; padding: 0 1.25rem; margin-top: -3rem; }
   .hstill-cards { position: relative; left: auto; bottom: auto; transform: none; width: auto; grid-template-columns: 1fr; padding: 1.25rem 1.25rem 0; }
-  .intro-video { object-position: 80% 50%; }
-}
-/* desktop: nudge the scene right so the headline never touches the dial; same on video + still so the fade is seamless */
-@media (min-width: 761px) {
-  .intro-video, .hstill-bg { transform: translateX(7%);
-    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16%); mask-image: linear-gradient(90deg, transparent 0, #000 16%); }
 }
