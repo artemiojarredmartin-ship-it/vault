@@ -1,7 +1,7 @@
 /* Vault service worker: makes the app installable and usable offline.
  * Network first (so updates show up right away), cache as the offline fallback.
  * Bump VERSION with the ?v= tags in index.html. */
-const VERSION = '1.5.3';
+const VERSION = '1.5.4';
 const CACHE = 'vault-' + VERSION;
 const SHELL = [
   './', './index.html', './manifest.webmanifest',

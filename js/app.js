@@ -320,7 +320,7 @@
   // The Blender film plays INSIDE the home hero, start to finish, untouched. When its last
   // frame lands it simply stays there (that frame is the hero), and only the headline,
   // button and cards fade in around it. No overlay, no swap, so nothing can jump.
-  const HERO_V = 7;
+  const HERO_V = 8;
   const intro = { video: null, phase: 'off' }; // off | playing | done
   function playIntro() {
     let seen = false; try { seen = sessionStorage.getItem('vault.intro') === '1'; } catch (e) { /* private mode */ }
